@@ -6,7 +6,7 @@ import builtins from "builtin-modules";
 import esbuild from "esbuild";
 
 const PORT = 3333;
-const ROOT = import.meta.dirname;
+const ROOT = process.cwd();
 
 // ── MIME types ──────────────────────────────────────────────
 const MIME = {
@@ -69,7 +69,7 @@ console.log("[esbuild] watching src/**/*.ts");
 
 // ── File watcher (CSS + HTML) ──────────────────────────────
 import { existsSync } from "fs";
-const watchTargets = ["styles.css", "preview.html"];
+const watchTargets = ["styles.css"];
 for (const file of watchTargets) {
   const abs = join(ROOT, file);
   if (!existsSync(abs)) {
@@ -81,7 +81,7 @@ for (const file of watchTargets) {
     broadcast("reload", { file });
   });
 }
-console.log("[watch] monitoring styles.css, preview.html");
+console.log("[watch] monitoring styles.css");
 
 // ── HTTP server ─────────────────────────────────────────────
 const server = createServer(async (req, res) => {
@@ -100,7 +100,7 @@ const server = createServer(async (req, res) => {
   }
 
   // Serve files
-  let url = req.url === "/" ? "/preview.html" : req.url;
+  let url = req.url === "/" ? "/main.js" : req.url;
   const filePath = resolve(ROOT, url.slice(1));
 
   if (!filePath.startsWith(ROOT)) {

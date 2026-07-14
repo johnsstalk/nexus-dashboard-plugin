@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 
-const ROOT = import.meta.dirname;
+const ROOT = process.cwd();
 const manifest = JSON.parse(readFileSync(join(ROOT, "manifest.json"), "utf-8"));
 const version = manifest.version;
 
