@@ -23,12 +23,6 @@ ASCII art banners + theme-aware dashboard for your Obsidian vault — stats, MOC
 
 ## Installation
 
-### Obsidian Community Plugins
-
-1. Open **Settings → Community Plugins → Browse**
-2. Search for **"Nexus Dashboard"**
-3. Install and enable
-
 ### Manual
 
 1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/johnsstalk/nexus-dashboard-plugin/releases)
