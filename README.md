@@ -38,8 +38,10 @@ section:
       color: #FF6B6B
 
 recently: true
-```
+`
 ````
+
+![Dashboard](assets/nexus.png)
 
 ### ASCII Art
 
@@ -51,6 +53,16 @@ size: 1.5
 My Vault Title
 ```
 ````
+
+### Journal Example
+
+Code block:
+
+![Code Block](assets/journal_code_block.png)
+
+Result:
+
+![Journal](assets/journal.png)
 
 ### Commands
 
@@ -126,6 +138,8 @@ section:
 | `path` | vault path | — |
 | `icon` | icon name | — |
 | `color` | CSS color | — |
+
+![Cards](assets/project.png)
 
 #### Graph
 
