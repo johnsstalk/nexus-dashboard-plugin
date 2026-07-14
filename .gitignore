@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build output
+main.js
+main.js.map
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+.env
+.env.local
+
+# Dev artifacts
+MERGE_LOG.md
+styles.css.map

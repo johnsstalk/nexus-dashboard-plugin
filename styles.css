@@ -1,0 +1,830 @@
+/* ============================================================
+   Nexus Stats — Single-line card-style counters
+   ============================================================ */
+
+.nexus-stats {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 0 28px 0;
+  flex-wrap: nowrap;
+}
+
+.nexus-stat-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  white-space: nowrap;
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+
+.nexus-stat-card:hover {
+  border-color: var(--interactive-accent);
+  background: var(--background-modifier-hover);
+}
+
+.nexus-stat-num {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--interactive-accent);
+  line-height: 1;
+}
+
+.nexus-stat-label {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  line-height: 1;
+}
+
+/* ============================================================
+   Nexus Hub — Theme-Aware MOC Card Grid
+   ============================================================ */
+
+/* ── Grid Layout ───────────────────────────────────────────── */
+.nexus-grid > :not(.nexus-card):not(.nexus-card-mini) { display: none; }
+
+.nexus-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--nexus-moc-columns, 2), 1fr);
+  gap: 14px;
+  margin-top: 1rem;
+  min-height: 0;
+}
+
+/* ── Card ──────────────────────────────────────────────────── */
+.nexus-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 20px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  text-decoration: none !important;
+  color: var(--text-normal) !important;
+  cursor: pointer;
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.nexus-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--interactive-accent);
+  background: var(--background-modifier-hover);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+/* ── Shine Sweep ───────────────────────────────────────────── */
+.nexus-card::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.08),
+    transparent
+  );
+  transition: left 0.6s ease;
+  pointer-events: none;
+}
+
+.nexus-card:hover::after {
+  left: 100%;
+}
+
+.nexus-card:active {
+  transform: translateY(0) scale(0.985);
+}
+
+/* ── Icon ──────────────────────────────────────────────────── */
+.nexus-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform 0.2s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.nexus-card-icon svg {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.nexus-card:hover .nexus-card-icon {
+  animation: none;
+  transform: scale(1.08);
+  border-color: var(--interactive-accent);
+  color: var(--interactive-accent);
+}
+
+/* ── Body ──────────────────────────────────────────────────── */
+.nexus-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.nexus-card-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-normal);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.15s ease;
+}
+
+.nexus-card:hover .nexus-card-title {
+  color: var(--interactive-accent);
+}
+
+.nexus-card-desc {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Divider ──────────────────────────────────────────────── */
+.nexus-divider {
+  margin-top: 1.8rem;
+  margin-bottom: 0.4rem;
+  text-align: center;
+}
+
+.nexus-divider-text {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.6;
+}
+
+/* ── Mini Grid (Recent Notes) ─────────────────────────────── */
+.nexus-mini-grid > :not(.nexus-card-mini) { display: none; }
+
+.nexus-mini-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--nexus-mini-columns, 3), 1fr);
+  gap: 10px;
+  margin-top: 0.5rem;
+}
+
+.nexus-card-mini {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  text-decoration: none !important;
+  color: var(--text-normal) !important;
+  cursor: pointer;
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.nexus-card-mini:hover {
+  transform: translateY(-2px);
+  border-color: var(--interactive-accent);
+  background: var(--background-modifier-hover);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+.nexus-card-mini:active {
+  transform: translateY(0) scale(0.985);
+}
+
+/* ── Shine Sweep (Mini) ────────────────────────────────────── */
+.nexus-card-mini::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.08),
+    transparent
+  );
+  transition: left 0.6s ease;
+  pointer-events: none;
+}
+
+.nexus-card-mini:hover::after {
+  left: 100%;
+}
+
+/* ── Icon (Mini) ───────────────────────────────────────────── */
+.nexus-card-mini-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform 0.2s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.nexus-card-mini-icon svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.nexus-card-mini:hover .nexus-card-mini-icon {
+  animation: none;
+  transform: scale(1.08);
+  border-color: var(--interactive-accent);
+  color: var(--interactive-accent);
+}
+
+/* ── Body (Mini) ───────────────────────────────────────────── */
+.nexus-card-mini-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.nexus-card-mini-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-normal);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.15s ease;
+}
+
+.nexus-card-mini:hover .nexus-card-mini-title {
+  color: var(--interactive-accent);
+}
+
+.nexus-card-mini-desc {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Empty State ───────────────────────────────────────────── */
+.nexus-empty {
+  text-align: center;
+  padding: 2rem 1rem;
+  color: var(--text-muted);
+}
+
+.nexus-empty-text {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 0.4rem;
+}
+
+.nexus-empty-subtext {
+  font-size: 0.82rem;
+  color: var(--text-faint);
+}
+
+/* ── Mobile Responsive ─────────────────────────────────────── */
+@media (max-width: 600px) {
+  .nexus-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .nexus-mini-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .nexus-card {
+    padding: 14px 16px;
+  }
+
+  .nexus-card-mini {
+    padding: 10px 12px;
+  }
+
+  .nexus-stats {
+    gap: 6px;
+    padding: 12px 0 20px 0;
+    flex-wrap: wrap;
+  }
+
+  .nexus-stat-card {
+    padding: 4px 10px;
+  }
+
+  .nexus-stat-num {
+    font-size: 0.8rem;
+  }
+
+  .nexus-stat-label {
+    font-size: 0.7rem;
+  }
+}
+
+/* ── Reduced Motion ────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .nexus-card,
+  .nexus-card-icon,
+  .nexus-card-mini,
+  .nexus-card-mini-icon {
+    transition: none !important;
+  }
+  .nexus-card:hover,
+  .nexus-card-mini:hover {
+    transform: none !important;
+  }
+  .nexus-card:hover .nexus-card-icon,
+  .nexus-card-mini:hover .nexus-card-mini-icon {
+    transform: none !important;
+  }
+}
+
+/* ── Hidden Graph Links ───────────────────────────────────── */
+.nexus-graph-links,
+.nexus-graph-links * {
+  visibility: hidden !important;
+  position: absolute !important;
+  width: 0 !important;
+  height: 0 !important;
+  overflow: hidden !important;
+  font-size: 0 !important;
+  line-height: 0 !important;
+  pointer-events: none !important;
+}
+
+/* ── Section-Based Dashboard ───────────────────────────────────── */
+
+.nexus-section {
+  margin-bottom: 1.5rem;
+}
+
+.nexus-section-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1.5rem 0 0.75rem 0;
+}
+
+.nexus-section-divider-line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--background-modifier-border), transparent);
+}
+
+.nexus-section-divider-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+
+.nexus-grid--cols-2 {
+  grid-template-columns: repeat(2, 1fr) !important;
+}
+
+.nexus-grid--cols-3 {
+  grid-template-columns: repeat(3, 1fr) !important;
+}
+
+.nexus-grid--cols-4 {
+  grid-template-columns: repeat(4, 1fr) !important;
+}
+
+@media (max-width: 600px) {
+  .nexus-grid--cols-2,
+  .nexus-grid--cols-3,
+  .nexus-grid--cols-4 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Focus / Accessibility ─────────────────────────────────── */
+.nexus-card:focus-visible,
+.nexus-card-mini:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 3px;
+}
+
+/* ============================================================
+   ASCII Header — FIGlet code block renderer
+   ============================================================ */
+
+.ascii-header-wrapper {
+  overflow-x: auto;
+  padding: 4px 0;
+  text-align: center;
+}
+
+.ascii-header-wrapper[data-align="left"] {
+  text-align: left;
+}
+
+.ascii-header-wrapper[data-align="right"] {
+  text-align: right;
+}
+
+.ascii-header-output {
+  font-family: "JetBrains Mono NL", "Fira Code", "Cascadia Code", monospace;
+  line-height: 1 !important;
+  white-space: pre;
+  margin: 0;
+  padding: 16px 0;
+  overflow-x: auto;
+  background: transparent !important;
+}
+
+.ascii-header-preview {
+  font-family: "JetBrains Mono NL", monospace;
+  line-height: 1 !important;
+  white-space: pre;
+  margin: 0;
+}
+
+.is-phone .ascii-header-output {
+  font-size: 0.45em !important;
+}
+
+.is-phone .ascii-header-preview {
+  font-size: 0.45em !important;
+}
+
+.markdown-preview-section .ascii-header-output,
+.markdown-rendered .ascii-header-output {
+  border: none !important;
+}
+
+.ascii-header-hint {
+  padding: 8px;
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 0.85em;
+}
+
+/* ============================================================
+   Settings UI — Clean & Minimal
+   ============================================================ */
+
+/* ── (Section card styles removed — using native setHeading()) ── */
+
+/* ── MOC Card Heading ──────────────────────────────────────── */
+.nexus-settings-moc-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 0.75rem;
+  margin-bottom: 0.25rem;
+  padding: 5px 10px;
+  border-radius: 6px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.nexus-settings-moc-heading:hover {
+  background: var(--background-modifier-hover);
+  border-color: var(--interactive-accent);
+}
+
+.nexus-settings-moc-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.nexus-settings-moc-arrow.collapsed {
+  transform: rotate(-90deg);
+}
+
+.nexus-settings-moc-arrow svg {
+  width: 12px;
+  height: 12px;
+}
+
+.nexus-settings-moc-title {
+  flex: 1;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.nexus-settings-moc-title-sep {
+  color: var(--text-faint);
+  font-weight: 400;
+  margin: 0 2px;
+}
+
+.nexus-settings-moc-path {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-family: var(--font-monospace);
+  font-size: 0.75rem;
+}
+
+.nexus-settings-moc-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.nexus-settings-moc-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.nexus-settings-moc-btn:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.nexus-settings-moc-btn:disabled {
+  color: var(--text-faint);
+  cursor: default;
+  opacity: 0.35;
+}
+
+.nexus-settings-moc-btn:disabled:hover {
+  background: none;
+  color: var(--text-faint);
+}
+
+.nexus-settings-moc-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+.nexus-settings-moc-btn--delete:hover {
+  color: var(--text-error);
+  background: rgba(255, 0, 0, 0.08);
+}
+
+.nexus-settings-moc-btn--delete:hover svg {
+  color: var(--text-error);
+}
+
+/* ── Preview Box ───────────────────────────────────────────── */
+.nexus-settings-preview {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-left: 2px solid var(--interactive-accent);
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 0.5rem;
+  overflow-x: auto;
+}
+
+.nexus-settings-preview pre {
+  margin: 0;
+  padding: 0;
+  background: transparent !important;
+  border: none !important;
+}
+
+/* ── Divider Preview ───────────────────────────────────────── */
+.nexus-settings-divider-preview {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 1rem 1.2rem;
+  margin-top: 0.5rem;
+}
+
+.nexus-settings-divider-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.nexus-settings-divider-preview-line {
+  flex: 1;
+  height: 1px;
+}
+
+.nexus-settings-divider-preview-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+/* ── Advanced Toggle ───────────────────────────────────────── */
+.nexus-settings-advanced-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 0.5rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  background: none;
+  border: 1px solid transparent;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+
+.nexus-settings-advanced-toggle:hover {
+  color: var(--text-normal);
+  border-color: var(--background-modifier-border);
+}
+
+.nexus-settings-advanced-toggle svg {
+  width: 10px;
+  height: 10px;
+  transition: transform 0.15s ease;
+}
+
+.nexus-settings-advanced-toggle.expanded svg {
+  transform: rotate(90deg);
+}
+
+.nexus-settings-advanced-body {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed var(--background-modifier-border);
+}
+
+/* ── Reset Button ──────────────────────────────────────────── */
+.nexus-settings-reset-btn {
+  background: none;
+  border: 1px solid rgba(255, 0, 0, 0.2);
+  color: var(--text-error);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.nexus-settings-reset-btn:hover {
+  background: rgba(255, 0, 0, 0.08);
+  border-color: rgba(255, 0, 0, 0.4);
+}
+
+/* ── Plugin Title ──────────────────────────────────────────── */
+.nexus-settings-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.nexus-settings-title svg {
+  width: 22px;
+  height: 22px;
+  color: var(--interactive-accent);
+}
+
+.nexus-settings-title span {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-normal);
+}
+
+.nexus-settings-subtitle {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-bottom: 1.2rem;
+}
+
+/* ============================================================
+   Greeting
+   ============================================================ */
+
+.nexus-greeting {
+  font-size: 1.1rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 0.5rem 0 0.25rem;
+}
+
+/* ============================================================
+   Quick Actions Toolbar
+   ============================================================ */
+
+.nexus-toolbar {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  padding: 0.5rem 0 1rem;
+}
+
+.nexus-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+
+.nexus-toolbar-btn:hover {
+  border-color: var(--interactive-accent);
+  color: var(--interactive-accent);
+  background: var(--background-modifier-hover);
+}
+
+.nexus-toolbar-btn svg {
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   Drag-and-Drop MOC Headings
+   ============================================================ */
+
+.nexus-settings-moc-drag {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  flex-shrink: 0;
+  color: var(--text-faint);
+  cursor: grab;
+  font-size: 0.7rem;
+  letter-spacing: 1px;
+  user-select: none;
+}
+
+.nexus-settings-moc-drag:active {
+  cursor: grabbing;
+}
+
+.nexus-settings-moc-heading.nexus-dragging {
+  opacity: 0.4;
+}
+
+.nexus-settings-moc-heading.nexus-drag-over {
+  border-top: 2px solid var(--interactive-accent);
+}

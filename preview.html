@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nexus Dashboard — Preview</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    body {
+      font-family: var(--font-interface);
+      background: var(--background-primary);
+      color: var(--text-normal);
+      max-width: 800px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+    }
+  </style>
+</head>
+<body>
+  <div id="preview">
+    <p>Loading preview...</p>
+  </div>
+  <script>
+    const source = document.getElementById("preview");
+    const evtSource = new EventSource("/events");
+    evtSource.addEventListener("reload", () => {
+      location.reload();
+    });
+    evtSource.addEventListener("connected", () => {
+      console.log("[Nexus Dev] SSE connected");
+    });
+  </script>
+</body>
+</html>
