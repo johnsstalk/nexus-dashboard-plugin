@@ -1,9 +1,7 @@
 export interface DashboardConfig {
 	header: HeaderConfig;
-	toolbar: boolean;
-	greeting: boolean;
 	stats: StatsConfig;
-	sections: SectionConfig[];
+	blocks: (DividerBlockConfig | SectionConfig)[];
 	recently: boolean;
 	graph: GraphConfig;
 }
@@ -27,10 +25,15 @@ export interface StatItem {
 	folder: string;
 }
 
-export interface SectionConfig {
+export interface DividerBlockConfig {
+	kind: "divider";
 	title: string;
-	divider: boolean;
-	columns: 2 | 3 | 4;
+	type?: string;
+}
+
+export interface SectionConfig {
+	kind: "section";
+	columns: 1 | 2 | 3 | 4;
 	cards: CardConfig[];
 }
 
@@ -48,11 +51,4 @@ export interface GraphConfig {
 	exclude: string[];
 }
 
-export type LayoutPreset = "2col" | "3col" | "compact" | "wide";
 
-export const LAYOUT_PRESETS: Record<LayoutPreset, { mocGridColumns: number; miniGridColumns: number; label: string }> = {
-	"2col": { mocGridColumns: 2, miniGridColumns: 3, label: "2-column" },
-	"3col": { mocGridColumns: 3, miniGridColumns: 3, label: "3-column" },
-	compact: { mocGridColumns: 2, miniGridColumns: 4, label: "Compact" },
-	wide: { mocGridColumns: 3, miniGridColumns: 4, label: "Wide" },
-};

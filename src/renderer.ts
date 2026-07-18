@@ -1,27 +1,32 @@
-import { MarkdownRenderChild, TFolder, Menu } from "obsidian";
+import { MarkdownRenderChild, TFolder, TFile, Menu } from "obsidian";
 import type NexusDashboardPlugin from "./main";
-import { NexusSettings } from "./settings";
+import { NexusSettings, DIVIDER_PRESETS } from "./settings";
 import { SMALL_ICONS, ICONS, DEFAULT_ICON } from "./icons";
 import { renderFiglet, getFontByName } from "./figlet";
 import { parseDashboard, buildDefaultConfig } from "./parser";
-import { DashboardConfig, HeaderConfig, SectionConfig, CardConfig } from "./types";
+import { DashboardConfig, DividerBlockConfig, HeaderConfig, SectionConfig, CardConfig } from "./types";
 
 export class NexusRenderer extends MarkdownRenderChild {
 	private plugin: NexusDashboardPlugin;
 	private source: string;
+	private sourcePath: string;
 	private rendering = false;
 
-	constructor(containerEl: HTMLElement, plugin: NexusDashboardPlugin, source: string) {
+	constructor(containerEl: HTMLElement, plugin: NexusDashboardPlugin, source: string, sourcePath: string) {
 		super(containerEl);
 		this.plugin = plugin;
 		this.source = source;
+		this.sourcePath = sourcePath;
 	}
 
 	async onload(): Promise<void> {
+		this.plugin.activeRenderers.add(this);
 		await this.render();
 	}
 
-	onunload(): void {}
+	onunload(): void {
+		this.plugin.activeRenderers.delete(this);
+	}
 
 	async render(): Promise<void> {
 		if (this.rendering) return;
@@ -48,19 +53,9 @@ export class NexusRenderer extends MarkdownRenderChild {
 			config = baseConfig;
 		}
 
-		// ── Greeting ──────────────────────────────────────
-		if (config.greeting) {
-			this.renderGreeting(containerEl);
-		}
-
 		// ── Header ────────────────────────────────────────
 		if (config.header.enabled) {
 			this.renderHeader(containerEl, config.header);
-		}
-
-		// ── Toolbar ───────────────────────────────────────
-		if (config.toolbar) {
-			this.renderToolbar(containerEl);
 		}
 
 		// ── Stats bar ─────────────────────────────────────
@@ -68,9 +63,13 @@ export class NexusRenderer extends MarkdownRenderChild {
 			this.renderStatsBar(containerEl, config.stats);
 		}
 
-		// ── Sections ──────────────────────────────────────
-		for (const section of config.sections) {
-			this.renderSection(containerEl, section);
+		// ── Blocks (dividers + sections in order) ─────────
+		for (const block of config.blocks) {
+			if (block.kind === "divider") {
+				this.renderStandaloneDivider(containerEl, block);
+			} else {
+				this.renderSection(containerEl, block);
+			}
 		}
 
 		// ── Recently modified ─────────────────────────────
@@ -80,7 +79,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 
 		// ── Graph links ───────────────────────────────────
 		if (config.graph.enabled) {
-			this.renderGraphLinks(containerEl, config.graph);
+			await this.renderGraphLinks(config);
 		}
 	}
 
@@ -89,26 +88,38 @@ export class NexusRenderer extends MarkdownRenderChild {
 	private mergeConfigs(base: DashboardConfig, override: DashboardConfig, source: string): DashboardConfig {
 		const merged: DashboardConfig = { ...base };
 
-		if (source.includes("toolbar:")) {
-			merged.toolbar = override.toolbar;
+		// In populated code blocks, default header to false unless explicitly written
+		// Filter out empty values so settings defaults survive the merge
+		if (source.includes("header:")) {
+			const entries = Object.entries(override.header).filter(([_, v]) => v);
+			merged.header = { ...base.header, ...Object.fromEntries(entries), enabled: true };
+		} else {
+			merged.header = { ...base.header, enabled: false };
 		}
-		if (source.includes("greeting:")) {
-			merged.greeting = override.greeting;
-		}
-		if (override.header.enabled) {
-			merged.header = { ...base.header, ...override.header, enabled: true };
-		}
-		if (override.stats.enabled !== base.stats.enabled) {
+		// In populated code blocks, default stats to false unless explicitly written
+		// Only merge the enabled flag — preserve items from settings (code block syntax has no stat-item syntax)
+		if (source.includes("stats:")) {
 			merged.stats = { ...base.stats, enabled: override.stats.enabled };
+		} else {
+			merged.stats = { ...base.stats, enabled: false };
 		}
-		if (override.sections.length > 0) {
-			merged.sections = override.sections;
+		// In populated code blocks, default blocks to empty unless explicitly written
+		if (source.includes("section:") || source.includes("divider:")) {
+			merged.blocks = override.blocks;
+		} else {
+			merged.blocks = [];
 		}
+		// In populated code blocks, default recently to false unless explicitly written
 		if (source.includes("recently:")) {
 			merged.recently = override.recently;
+		} else {
+			merged.recently = false;
 		}
-		if (override.graph.enabled) {
-			merged.graph = { ...base.graph, ...override.graph, enabled: true };
+		// In populated code blocks, default graph to false unless explicitly written
+		if (source.includes("graph:")) {
+			merged.graph = { ...base.graph, ...override.graph };
+		} else {
+			merged.graph = { ...base.graph, enabled: false };
 		}
 
 		return merged;
@@ -129,9 +140,6 @@ export class NexusRenderer extends MarkdownRenderChild {
 			align: opts.asciiDefaultAlign || "center",
 		};
 
-		config.toolbar = false;
-		config.greeting = false;
-
 		config.stats = {
 			enabled: opts.showStats,
 			items: (opts.stats || []).map((s) => ({
@@ -142,9 +150,8 @@ export class NexusRenderer extends MarkdownRenderChild {
 
 		if (opts.mocs && opts.mocs.length > 0) {
 			const section: SectionConfig = {
-				title: "",
-				divider: false,
-				columns: opts.mocGridColumns as 2 | 3 | 4,
+				kind: "section",
+				columns: opts.mocGridColumns as 1 | 2 | 3 | 4,
 				cards: opts.mocs.map((moc) => ({
 					type: "big" as const,
 					label: moc.title,
@@ -154,26 +161,12 @@ export class NexusRenderer extends MarkdownRenderChild {
 					color: moc.color,
 				})),
 			};
-			config.sections.push(section);
+			config.blocks.push(section);
 		}
 
 		config.recently = opts.showRecently;
+		config.graph = { enabled: opts.showGraph, exclude: [] };
 		return config;
-	}
-
-	// ── Render: Greeting ───────────────────────────────────────
-
-	private renderGreeting(containerEl: HTMLElement): void {
-		const hour = new Date().getHours();
-		let period = "Good evening";
-		if (hour < 12) period = "Good morning";
-		else if (hour < 18) period = "Good afternoon";
-
-		const name = this.plugin.settings.greetingName;
-		const greeting = name ? `${period}, ${name}` : period;
-
-		const el = containerEl.createDiv({ cls: "nexus-greeting" });
-		el.textContent = greeting;
 	}
 
 	// ── Render: Header ─────────────────────────────────────────
@@ -188,79 +181,6 @@ export class NexusRenderer extends MarkdownRenderChild {
 		if (header.size === "small") pre.style.fontSize = "0.6em";
 	}
 
-	// ── Render: Toolbar ────────────────────────────────────────
-
-	private renderToolbar(containerEl: HTMLElement): void {
-		const toolbar = containerEl.createDiv({ cls: "nexus-toolbar" });
-
-		const actions = [
-			{
-				icon: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>`,
-				label: "New note",
-				action: () => this.createNote(),
-			},
-			{
-				icon: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>`,
-				label: "Open daily",
-				action: () => this.openDailyNote(),
-			},
-			{
-				icon: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>`,
-				label: "Search",
-				action: () => this.openSearch(),
-			},
-			{
-				icon: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>`,
-				label: "Random note",
-				action: () => this.openRandomNote(),
-			},
-		];
-
-		for (const action of actions) {
-			const btn = toolbar.createEl("button", { cls: "nexus-toolbar-btn" });
-			btn.innerHTML = action.icon;
-			btn.createEl("span", { text: action.label });
-			btn.addEventListener("click", action.action);
-		}
-	}
-
-	private async createNote(): Promise<void> {
-		let name = "Untitled";
-		let counter = 1;
-		while (this.plugin.app.vault.getAbstractFileByPath(`${name}.md`)) {
-			name = `Untitled ${counter}`;
-			counter++;
-		}
-		const file = await this.plugin.app.vault.create(`${name}.md`, "");
-		await this.plugin.app.workspace.openLinkText(file.path, "", false);
-	}
-
-	private openDailyNote(): void {
-		const daily = this.plugin.app.vault.getMarkdownFiles().find((f) => {
-			const now = new Date();
-			const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-			return f.path.includes(today);
-		});
-		if (daily) {
-			this.plugin.app.workspace.openLinkText(daily.path, "", false);
-		} else {
-			// Fallback: open a daily note via the daily notes plugin if available
-			(this.plugin.app as any).commands?.executeCommandById("daily-notes");
-		}
-	}
-
-	private openSearch(): void {
-		(this.plugin.app as any).commands?.executeCommandById("switcher:open");
-	}
-
-	private openRandomNote(): void {
-		const files = this.plugin.app.vault.getMarkdownFiles();
-		if (files.length > 0) {
-			const random = files[Math.floor(Math.random() * files.length)];
-			this.plugin.app.workspace.openLinkText(random.path, "", false);
-		}
-	}
-
 	// ── Render: Stats Bar ──────────────────────────────────────
 
 	private renderStatsBar(containerEl: HTMLElement, stats: DashboardConfig["stats"]): void {
@@ -273,20 +193,26 @@ export class NexusRenderer extends MarkdownRenderChild {
 		}
 	}
 
-	// ── Render: Section (with collapsible support) ─────────────
+	// ── Render: Standalone Divider ─────────────────────────────
+
+	private renderStandaloneDivider(containerEl: HTMLElement, divider: DividerBlockConfig): void {
+		if (!divider.title) return;
+		this.renderDivider(containerEl, divider.title, divider.type);
+	}
+
+	// ── Render: Section ───────────────────────────────────────
 
 	private renderSection(containerEl: HTMLElement, section: SectionConfig): void {
+		if (section.cards.length === 0) return;
+
 		const sectionEl = containerEl.createDiv({ cls: "nexus-section" });
 
-		// Divider with label
-		if (section.divider && section.title) {
-			this.renderDivider(sectionEl, section.title);
-		}
-
-		// Card grid
-		const gridEl = sectionEl.createDiv({
-			cls: `nexus-grid nexus-grid--cols-${section.columns}`,
-		});
+		const hasMini = section.cards.some(c => c.type === "mini");
+		const hasBig = section.cards.some(c => c.type === "big");
+		const gridCls = hasMini && !hasBig
+			? `nexus-mini-grid nexus-mini-grid--cols-${section.columns}`
+			: `nexus-grid nexus-grid--cols-${section.columns}`;
+		const gridEl = sectionEl.createDiv({ cls: gridCls });
 
 		for (const cardConfig of section.cards) {
 			const cardEl = this.createCard(cardConfig);
@@ -296,8 +222,9 @@ export class NexusRenderer extends MarkdownRenderChild {
 
 	// ── Shared: Divider ──────────────────────────────────────
 
-	private renderDivider(containerEl: HTMLElement, label: string): void {
-		const d = this.plugin.settings.dividerDesign;
+	private renderDivider(containerEl: HTMLElement, label: string, type?: string): void {
+		const preset = type && DIVIDER_PRESETS[type] ? DIVIDER_PRESETS[type] : this.plugin.settings.dividerDesign;
+		const d = preset;
 		const dividerEl = containerEl.createDiv({ cls: "nexus-section-divider" });
 		const lineLeft = dividerEl.createDiv({ cls: "nexus-section-divider-line" });
 		lineLeft.style.background = d.gradient;
@@ -324,14 +251,8 @@ export class NexusRenderer extends MarkdownRenderChild {
 		// Navigate on click
 		cardEl.addEventListener("click", (e) => {
 			e.preventDefault();
-			const file = this.plugin.app.metadataCache.getFirstLinkpathDest(card.path, "");
-			if (file) {
+			if (card.path) {
 				this.plugin.app.workspace.openLinkText(card.path, "", false);
-			} else {
-				const folder = this.plugin.app.vault.getAbstractFileByPath(card.path);
-				if (folder) {
-					this.plugin.app.workspace.openLinkText(card.path, "", false);
-				}
 			}
 		});
 
@@ -405,7 +326,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 		const body = cardEl.createDiv({ cls: bodyCls });
 		body.createEl("div", { text: card.label, cls: titleCls });
 
-		if (!isMini && card.desc) {
+		if (card.desc) {
 			body.createEl("div", { text: card.desc, cls: descCls });
 		}
 
@@ -416,7 +337,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 
 	private async renderRecentlyModified(containerEl: HTMLElement): Promise<void> {
 		const opts = this.plugin.settings;
-		const count = opts.recentCount || 9;
+		const count = opts.recentCount ?? 9;
 		const exclude = opts.excludeFolders || [];
 		const files = this.plugin.app.vault
 			.getMarkdownFiles()
@@ -460,17 +381,59 @@ export class NexusRenderer extends MarkdownRenderChild {
 
 	// ── Render: Graph Links ────────────────────────────────────
 
-	private renderGraphLinks(containerEl: HTMLElement, graph: DashboardConfig["graph"]): void {
-		const graphEl = containerEl.createDiv({ cls: "nexus-graph-links" });
-		const allFiles = this.plugin.app.vault.getAllLoadedFiles();
-		const folders = allFiles.filter(
-			(f): f is TFolder => f instanceof TFolder && !graph.exclude.includes(f.name)
-		);
-		for (const folder of folders) {
-			graphEl.createEl("a", {
-				cls: "internal-link",
-				text: `[[${folder.name}]]`,
-			});
+	private static readonly GRAPH_START = `<span class="nexus-graph-links">`;
+	private static readonly GRAPH_END = `</span>`;
+
+	private async renderGraphLinks(config: DashboardConfig): Promise<void> {
+		await this.injectGraphLinksToFile(config);
+	}
+
+	private computeGraphWikilinks(config: DashboardConfig): string {
+		const paths: string[] = [];
+		const exclude = config.graph.exclude;
+
+		for (const block of config.blocks) {
+			if (block.kind === "section") {
+				for (const card of block.cards) {
+					if (!paths.includes(card.path) && !exclude.some((ex) => card.path.includes(ex))) {
+						paths.push(card.path);
+					}
+				}
+			}
+		}
+
+		if (paths.length === 0) return "";
+		return paths.map((p) => `[[${p}]]`).join(" ");
+	}
+
+	private async injectGraphLinksToFile(config: DashboardConfig): Promise<void> {
+		const file = this.plugin.app.vault.getAbstractFileByPath(this.sourcePath);
+		if (!(file instanceof TFile)) return;
+
+		const wikilinks = this.computeGraphWikilinks(config);
+		const { GRAPH_START, GRAPH_END } = NexusRenderer;
+
+		const newBlock = wikilinks ? `${GRAPH_START}${wikilinks}${GRAPH_END}` : "";
+
+		try {
+			const content = await this.plugin.app.vault.cachedRead(file);
+			const startIdx = content.indexOf(GRAPH_START);
+			const endIdx = content.indexOf(GRAPH_END);
+
+			let updated: string;
+			if (startIdx !== -1 && endIdx !== -1 && startIdx < endIdx) {
+				const before = content.substring(0, startIdx);
+				const after = content.substring(endIdx + GRAPH_END.length);
+				updated = before + newBlock + after;
+			} else {
+				updated = content.trimEnd() + (newBlock ? `\n\n${newBlock}\n` : "\n");
+			}
+
+			if (updated !== content) {
+				await this.plugin.app.vault.modify(file, updated);
+			}
+		} catch (e) {
+			console.error("Nexus Dashboard: failed to inject graph links", e);
 		}
 	}
 

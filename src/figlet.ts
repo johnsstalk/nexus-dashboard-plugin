@@ -75,10 +75,14 @@ export function renderFiglet(
 	return lines.join("\n");
 }
 
+const FONTS: Record<string, FigletFont> = {
+	"ANSI Shadow": DEFAULT_FONT,
+};
+
 export function getAvailableFonts(): string[] {
-	return ["ANSI Shadow"];
+	return Object.keys(FONTS);
 }
 
-export function getFontByName(_name: string): FigletFont {
-	return DEFAULT_FONT;
+export function getFontByName(name: string): FigletFont {
+	return FONTS[name] ?? DEFAULT_FONT;
 }

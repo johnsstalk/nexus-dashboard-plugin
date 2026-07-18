@@ -51,7 +51,7 @@
 
 .nexus-grid {
   display: grid;
-  grid-template-columns: repeat(var(--nexus-moc-columns, 2), 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 14px;
   margin-top: 1rem;
   min-height: 0;
@@ -167,22 +167,6 @@
   text-overflow: ellipsis;
 }
 
-/* ── Divider ──────────────────────────────────────────────── */
-.nexus-divider {
-  margin-top: 1.8rem;
-  margin-bottom: 0.4rem;
-  text-align: center;
-}
-
-.nexus-divider-text {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  opacity: 0.6;
-}
-
 /* ── Mini Grid (Recent Notes) ─────────────────────────────── */
 .nexus-mini-grid > :not(.nexus-card-mini) { display: none; }
 
@@ -191,6 +175,22 @@
   grid-template-columns: repeat(var(--nexus-mini-columns, 3), 1fr);
   gap: 10px;
   margin-top: 0.5rem;
+}
+
+.nexus-mini-grid--cols-1 {
+  grid-template-columns: repeat(1, 1fr) !important;
+}
+
+.nexus-mini-grid--cols-2 {
+  grid-template-columns: repeat(2, 1fr) !important;
+}
+
+.nexus-mini-grid--cols-3 {
+  grid-template-columns: repeat(3, 1fr) !important;
+}
+
+.nexus-mini-grid--cols-4 {
+  grid-template-columns: repeat(4, 1fr) !important;
 }
 
 .nexus-card-mini {
@@ -302,35 +302,22 @@
   text-overflow: ellipsis;
 }
 
-/* ── Empty State ───────────────────────────────────────────── */
-.nexus-empty {
-  text-align: center;
-  padding: 2rem 1rem;
-  color: var(--text-muted);
-}
-
-.nexus-empty-text {
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  margin-bottom: 0.4rem;
-}
-
-.nexus-empty-subtext {
-  font-size: 0.82rem;
-  color: var(--text-faint);
-}
-
 /* ── Mobile Responsive ─────────────────────────────────────── */
 @media (max-width: 600px) {
-  .nexus-grid {
+  .nexus-grid,
+  .nexus-grid--cols-1,
+  .nexus-grid--cols-2,
+  .nexus-grid--cols-3,
+  .nexus-grid--cols-4 {
     grid-template-columns: 1fr;
-    gap: 10px;
   }
 
-  .nexus-mini-grid {
+  .nexus-mini-grid,
+  .nexus-mini-grid--cols-1,
+  .nexus-mini-grid--cols-2,
+  .nexus-mini-grid--cols-3,
+  .nexus-mini-grid--cols-4 {
     grid-template-columns: 1fr 1fr;
-    gap: 8px;
   }
 
   .nexus-card {
@@ -419,6 +406,10 @@
   white-space: nowrap;
 }
 
+.nexus-grid--cols-1 {
+  grid-template-columns: repeat(1, 1fr) !important;
+}
+
 .nexus-grid--cols-2 {
   grid-template-columns: repeat(2, 1fr) !important;
 }
@@ -504,10 +495,6 @@
 /* ============================================================
    Settings UI — Clean & Minimal
    ============================================================ */
-
-/* ── (Section card styles removed — using native setHeading()) ── */
-
-/* ── MOC Card Heading ──────────────────────────────────────── */
 .nexus-settings-moc-heading {
   display: flex;
   align-items: center;
@@ -559,19 +546,6 @@
   min-width: 0;
 }
 
-.nexus-settings-moc-title-sep {
-  color: var(--text-faint);
-  font-weight: 400;
-  margin: 0 2px;
-}
-
-.nexus-settings-moc-path {
-  color: var(--text-muted);
-  font-weight: 400;
-  font-family: var(--font-monospace);
-  font-size: 0.75rem;
-}
-
 .nexus-settings-moc-actions {
   display: flex;
   align-items: center;
@@ -615,13 +589,46 @@
   height: 12px;
 }
 
-.nexus-settings-moc-btn--delete:hover {
-  color: var(--text-error);
-  background: rgba(255, 0, 0, 0.08);
+.nexus-settings-moc-btn--delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+  border-radius: 0;
+  transition: color 0.12s ease;
 }
 
-.nexus-settings-moc-btn--delete:hover svg {
+.nexus-settings-moc-btn--delete:hover {
   color: var(--text-error);
+  background: none;
+}
+
+.nexus-settings-moc-btn--delete svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ── Note Path Autocomplete ──────────────────────────────── */
+.nexus-note-path-input {
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-family: inherit;
+  font-size: 0.85em;
+}
+
+.nexus-note-path-input:focus {
+  border-color: var(--interactive-accent);
+  outline: none;
 }
 
 /* ── Preview Box ───────────────────────────────────────────── */
@@ -670,134 +677,19 @@
   color: var(--text-muted);
 }
 
-/* ── Advanced Toggle ───────────────────────────────────────── */
-.nexus-settings-advanced-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 0.5rem;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 0.7rem;
-  font-weight: 500;
-  color: var(--text-muted);
-  cursor: pointer;
-  background: none;
-  border: 1px solid transparent;
-  transition: color 0.12s ease, border-color 0.12s ease;
-}
-
-.nexus-settings-advanced-toggle:hover {
-  color: var(--text-normal);
-  border-color: var(--background-modifier-border);
-}
-
-.nexus-settings-advanced-toggle svg {
-  width: 10px;
-  height: 10px;
-  transition: transform 0.15s ease;
-}
-
-.nexus-settings-advanced-toggle.expanded svg {
-  transform: rotate(90deg);
-}
-
-.nexus-settings-advanced-body {
-  margin-top: 0.5rem;
-  padding-top: 0.5rem;
-  border-top: 1px dashed var(--background-modifier-border);
-}
-
-/* ── Reset Button ──────────────────────────────────────────── */
-.nexus-settings-reset-btn {
-  background: none;
-  border: 1px solid rgba(255, 0, 0, 0.2);
-  color: var(--text-error);
-  border-radius: 6px;
-  padding: 6px 14px;
-  font-size: 0.78rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
-}
-
-.nexus-settings-reset-btn:hover {
-  background: rgba(255, 0, 0, 0.08);
-  border-color: rgba(255, 0, 0, 0.4);
-}
-
 /* ── Plugin Title ──────────────────────────────────────────── */
 .nexus-settings-title {
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.5rem;
-}
-
-.nexus-settings-title svg {
-  width: 22px;
-  height: 22px;
-  color: var(--interactive-accent);
-}
-
-.nexus-settings-title span {
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: var(--text-normal);
-}
-
-.nexus-settings-subtitle {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  margin-bottom: 1.2rem;
-}
-
-/* ============================================================
-   Greeting
-   ============================================================ */
-
-.nexus-greeting {
-  font-size: 1.1rem;
-  font-weight: 500;
-  color: var(--text-muted);
-  text-align: center;
-  padding: 0.5rem 0 0.25rem;
-}
-
-/* ============================================================
-   Quick Actions Toolbar
-   ============================================================ */
-
-.nexus-toolbar {
-  display: flex;
   justify-content: center;
-  gap: 8px;
-  padding: 0.5rem 0 1rem;
+  margin-bottom: 1rem;
 }
 
-.nexus-toolbar-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 12px;
-  border-radius: 6px;
-  border: 1px solid var(--background-modifier-border);
-  background: var(--background-secondary);
-  color: var(--text-muted);
-  font-size: 0.75rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
-}
-
-.nexus-toolbar-btn:hover {
-  border-color: var(--interactive-accent);
+.nexus-settings-logo {
+  font-size: 0.5em;
+  line-height: 1;
+  margin: 0;
   color: var(--interactive-accent);
-  background: var(--background-modifier-hover);
-}
-
-.nexus-toolbar-btn svg {
-  flex-shrink: 0;
+  font-family: monospace;
 }
 
 /* ============================================================

@@ -8,13 +8,14 @@ const DASHBOARD_NOTE_PATH = "Nexus Dashboard.md";
 
 export default class NexusDashboardPlugin extends Plugin {
 	settings: NexusSettings = DEFAULT_SETTINGS;
+	activeRenderers: Set<NexusRenderer> = new Set();
 
 	async onload() {
 		await this.loadSettings();
 
 		// ── Nexus Dashboard code block ──────────────────────
 		this.registerMarkdownCodeBlockProcessor("nexus-dashboard", (source, el, ctx) => {
-			const renderer = new NexusRenderer(el, this, source);
+			const renderer = new NexusRenderer(el, this, source, ctx.sourcePath);
 			ctx.addChild(renderer);
 		});
 
@@ -102,30 +103,37 @@ export default class NexusDashboardPlugin extends Plugin {
 	async loadSettings() {
 		const data = await this.loadData();
 		this.settings = {
-			headerText: data?.headerText ?? DEFAULT_SETTINGS.headerText,
-			openOnStartup: data?.openOnStartup ?? DEFAULT_SETTINGS.openOnStartup,
-			showGreeting: data?.showGreeting ?? DEFAULT_SETTINGS.showGreeting,
-			greetingName: data?.greetingName ?? DEFAULT_SETTINGS.greetingName,
-			showToolbar: data?.showToolbar ?? DEFAULT_SETTINGS.showToolbar,
-			mocs: data?.mocs ? data.mocs.map((m: any) => ({ ...m })) : DEFAULT_SETTINGS.mocs.map((m) => ({ ...m })),
-			stats: data?.stats ? data.stats.map((s: any) => ({ ...s })) : DEFAULT_SETTINGS.stats.map((s) => ({ ...s })),
-			showStats: data?.showStats ?? DEFAULT_SETTINGS.showStats,
-			showRecently: data?.showRecently ?? DEFAULT_SETTINGS.showRecently,
-			recentCount: data?.recentCount ?? DEFAULT_SETTINGS.recentCount,
-			excludeFolders: data?.excludeFolders ?? [],
-			mocGridColumns: data?.mocGridColumns ?? DEFAULT_SETTINGS.mocGridColumns,
-			miniGridColumns: data?.miniGridColumns ?? DEFAULT_SETTINGS.miniGridColumns,
-			dividerLabel: data?.dividerLabel ?? DEFAULT_SETTINGS.dividerLabel,
-			dividerDesign: data?.dividerDesign ?? { ...DEFAULT_SETTINGS.dividerDesign },
-			asciiDefaultFont: data?.asciiDefaultFont ?? DEFAULT_SETTINGS.asciiDefaultFont,
-			asciiDefaultColor: data?.asciiDefaultColor ?? DEFAULT_SETTINGS.asciiDefaultColor,
-			asciiDefaultSize: data?.asciiDefaultSize ?? DEFAULT_SETTINGS.asciiDefaultSize,
-			asciiDefaultAlign: data?.asciiDefaultAlign ?? DEFAULT_SETTINGS.asciiDefaultAlign,
+			headerText: typeof data?.headerText === "string" ? data.headerText : DEFAULT_SETTINGS.headerText,
+			openOnStartup: typeof data?.openOnStartup === "boolean" ? data.openOnStartup : DEFAULT_SETTINGS.openOnStartup,
+			mocs: data?.mocs && Array.isArray(data.mocs) ? data.mocs.map((m: any) => ({ ...m })) : DEFAULT_SETTINGS.mocs.map((m) => ({ ...m })),
+			stats: data?.stats && Array.isArray(data.stats) ? data.stats.map((s: any) => ({ ...s })) : DEFAULT_SETTINGS.stats.map((s) => ({ ...s })),
+			showStats: typeof data?.showStats === "boolean" ? data.showStats : DEFAULT_SETTINGS.showStats,
+			showRecently: typeof data?.showRecently === "boolean" ? data.showRecently : DEFAULT_SETTINGS.showRecently,
+			showGraph: typeof data?.showGraph === "boolean" ? data.showGraph : DEFAULT_SETTINGS.showGraph,
+			recentCount: typeof data?.recentCount === "number" ? data.recentCount : DEFAULT_SETTINGS.recentCount,
+			excludeFolders: Array.isArray(data?.excludeFolders) ? data.excludeFolders : [],
+			mocGridColumns: typeof data?.mocGridColumns === "number" ? data.mocGridColumns : DEFAULT_SETTINGS.mocGridColumns,
+			miniGridColumns: typeof data?.miniGridColumns === "number" ? data.miniGridColumns : DEFAULT_SETTINGS.miniGridColumns,
+			dividerLabel: typeof data?.dividerLabel === "string" ? data.dividerLabel : DEFAULT_SETTINGS.dividerLabel,
+			dividerDesign: data?.dividerDesign && typeof data.dividerDesign === "object" ? { ...DEFAULT_SETTINGS.dividerDesign, ...data.dividerDesign } : { ...DEFAULT_SETTINGS.dividerDesign },
+			asciiDefaultFont: typeof data?.asciiDefaultFont === "string" ? data.asciiDefaultFont : DEFAULT_SETTINGS.asciiDefaultFont,
+			asciiDefaultColor: typeof data?.asciiDefaultColor === "string" ? data.asciiDefaultColor : DEFAULT_SETTINGS.asciiDefaultColor,
+			asciiDefaultSize: typeof data?.asciiDefaultSize === "number" ? data.asciiDefaultSize : DEFAULT_SETTINGS.asciiDefaultSize,
+			asciiDefaultAlign: typeof data?.asciiDefaultAlign === "string" ? data.asciiDefaultAlign : DEFAULT_SETTINGS.asciiDefaultAlign,
 		};
 	}
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+		this.rerenderDashboards();
+	}
+
+	// ── Live-update all open dashboards ────────────────────
+
+	rerenderDashboards() {
+		for (const renderer of this.activeRenderers) {
+			renderer.render();
+		}
 	}
 
 	// ── ASCII block renderer ───────────────────────────────
@@ -158,12 +166,10 @@ export default class NexusDashboardPlugin extends Plugin {
 		}
 
 		const color = params.color ?? this.settings.asciiDefaultColor;
-		const size = params.size
-			? parseFloat(params.size)
-			: this.settings.asciiDefaultSize;
-		const align =
-			(params.align as "left" | "center" | "right") ??
-			this.settings.asciiDefaultAlign;
+		const parsedSize = params.size ? parseFloat(params.size) : NaN;
+		const size = Number.isFinite(parsedSize) ? parsedSize : this.settings.asciiDefaultSize;
+		const alignParam = params.align?.toLowerCase();
+		const align = (["left", "center", "right"].includes(alignParam) ? alignParam : this.settings.asciiDefaultAlign) as "left" | "center" | "right";
 		const fontName = params.font ?? this.settings.asciiDefaultFont;
 
 		const font = getFontByName(fontName);

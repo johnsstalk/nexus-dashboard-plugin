@@ -1,7 +1,6 @@
-import { App, PluginSettingTab, Setting, Notice } from "obsidian";
+import { App, PluginSettingTab, Setting, Notice, setIcon } from "obsidian";
 import type NexusDashboardPlugin from "./main";
 import { getAvailableFonts, renderFiglet } from "./figlet";
-import { LayoutPreset, LAYOUT_PRESETS } from "./types";
 
 export const ICON_NAMES = ["Journal", "Knowledge", "Personal", "Project", "Resources", "Trackers", "MOC", "Media"];
 
@@ -30,18 +29,15 @@ export interface DividerDesign {
 export interface NexusSettings {
 	headerText: string;
 	openOnStartup: boolean;
-	showGreeting: boolean;
-	greetingName: string;
-	showToolbar: boolean;
 	mocs: MocEntry[];
 	stats: StatEntry[];
 	showStats: boolean;
 	showRecently: boolean;
+	showGraph: boolean;
 	recentCount: number;
 	excludeFolders: string[];
 	mocGridColumns: number;
 	miniGridColumns: number;
-	layoutPreset: LayoutPreset;
 	dividerLabel: string;
 	dividerDesign: DividerDesign;
 	asciiDefaultFont: string;
@@ -79,18 +75,15 @@ export const DEFAULT_DIVIDER_DESIGN: DividerDesign = {
 export const DEFAULT_SETTINGS: NexusSettings = {
 	headerText: "NEXUS",
 	openOnStartup: false,
-	showGreeting: true,
-	greetingName: "",
-	showToolbar: true,
 	mocs: DEFAULT_MOCS,
 	stats: DEFAULT_STATS,
 	showStats: true,
 	showRecently: true,
+	showGraph: false,
 	recentCount: 9,
 	excludeFolders: [],
 	mocGridColumns: 2,
 	miniGridColumns: 3,
-	layoutPreset: "2col",
 	dividerLabel: "Recently Modified",
 	dividerDesign: { ...DEFAULT_DIVIDER_DESIGN },
 	asciiDefaultFont: "ANSI Shadow",
@@ -113,7 +106,12 @@ function getVaultFolders(app: App): string[] {
 	for (const file of app.vault.getMarkdownFiles()) {
 		const parts = file.path.split("/");
 		if (parts.length > 1) {
-			folders.add(parts[0]);
+			// Collect every unique folder path
+			let current = "";
+			for (let i = 0; i < parts.length - 1; i++) {
+				current = current ? `${current}/${parts[i]}` : parts[i];
+				folders.add(current);
+			}
 		}
 	}
 	return Array.from(folders).sort();
@@ -123,17 +121,11 @@ function getVaultFolders(app: App): string[] {
 
 const SVG = {
 	chevronDown: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>`,
-	chevronRight: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>`,
-	chevronUp: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>`,
-	x: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`,
-	trash: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>`,
-	layout: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>`,
-	nexus: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M4 12h16"/><path d="M12 4v16"/></svg>`,
 };
 
 // ── Divider Presets ────────────────────────────────────────────
 
-const DIVIDER_PRESETS: Record<string, DividerDesign> = {
+export const DIVIDER_PRESETS: Record<string, DividerDesign> = {
 	default: { ...DEFAULT_DIVIDER_DESIGN },
 	bold: {
 		gradient: "linear-gradient(90deg, transparent, var(--interactive-accent), transparent)",
@@ -197,7 +189,6 @@ function detectDividerPreset(d: DividerDesign): string {
 
 export class NexusSettingTab extends PluginSettingTab {
 	plugin: NexusDashboardPlugin;
-	private advancedOpen = false;
 	private draggedIndex: number | null = null;
 
 	constructor(app: App, plugin: NexusDashboardPlugin) {
@@ -209,11 +200,12 @@ export class NexusSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
-		// Title
+		// Title — centered ASCII art logo
 		const titleEl = containerEl.createDiv({ cls: "nexus-settings-title" });
-		titleEl.innerHTML = SVG.nexus;
-		titleEl.createEl("span", { text: "Nexus Dashboard" });
-		containerEl.createEl("p", { text: "Configure your dashboard, ASCII headers, stats, and layout.", cls: "nexus-settings-subtitle" });
+		titleEl.createEl("pre", {
+			text: renderFiglet(this.plugin.settings.headerText || "nexus-dashboard"),
+			cls: "nexus-settings-logo",
+		});
 
 		// ── General section ──────────────────────────────
 		new Setting(containerEl).setHeading().setName("General");
@@ -226,93 +218,6 @@ export class NexusSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.openOnStartup)
 					.onChange(async (value) => {
 						this.plugin.settings.openOnStartup = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Show greeting")
-			.setDesc("Display a time-aware greeting above the header")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showGreeting)
-					.onChange(async (value) => {
-						this.plugin.settings.showGreeting = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Greeting name")
-			.setDesc("Name shown in the greeting (leave empty to omit)")
-			.addText((text) =>
-				text
-					.setPlaceholder("Alex")
-					.setValue(this.plugin.settings.greetingName)
-					.onChange(async (value) => {
-						this.plugin.settings.greetingName = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Show toolbar")
-			.setDesc("Display quick action buttons below the header")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showToolbar)
-					.onChange(async (value) => {
-						this.plugin.settings.showToolbar = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		// ── Layout section ───────────────────────────────
-		new Setting(containerEl).setHeading().setName("Layout");
-
-		new Setting(containerEl)
-			.setName("Layout preset")
-			.setDesc("Choose a grid layout preset")
-			.addDropdown((dropdown) => {
-				for (const [key, preset] of Object.entries(LAYOUT_PRESETS)) {
-					dropdown.addOption(key, preset.label);
-				}
-				dropdown.setValue(this.plugin.settings.layoutPreset);
-				dropdown.onChange(async (value) => {
-					const preset = LAYOUT_PRESETS[value as LayoutPreset];
-					if (preset) {
-						this.plugin.settings.layoutPreset = value as LayoutPreset;
-						this.plugin.settings.mocGridColumns = preset.mocGridColumns;
-						this.plugin.settings.miniGridColumns = preset.miniGridColumns;
-						await this.plugin.saveSettings();
-					}
-				});
-			});
-
-		new Setting(containerEl)
-			.setName("MOC grid columns")
-			.setDesc("Number of columns for the MOC card grid")
-			.addSlider((slider) =>
-				slider
-					.setLimits(1, 4, 1)
-					.setValue(this.plugin.settings.mocGridColumns)
-					.setDynamicTooltip()
-					.onChange(async (value) => {
-						this.plugin.settings.mocGridColumns = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Recent notes grid columns")
-			.setDesc("Number of columns for the recent notes grid")
-			.addSlider((slider) =>
-				slider
-					.setLimits(1, 4, 1)
-					.setValue(this.plugin.settings.miniGridColumns)
-					.setDynamicTooltip()
-					.onChange(async (value) => {
-						this.plugin.settings.miniGridColumns = value;
 						await this.plugin.saveSettings();
 					})
 			);
@@ -403,10 +308,51 @@ export class NexusSettingTab extends PluginSettingTab {
 		const previewContainer = containerEl.createDiv({ cls: "nexus-settings-preview" });
 		this.renderAsciiPreview(previewContainer);
 
-		// ── MOC Cards section ─────────────────────────────
-		new Setting(containerEl).setHeading().setName("MOC cards");
+		// ── Layout section ───────────────────────────────
+		new Setting(containerEl).setHeading().setName("Layout");
+
+		new Setting(containerEl)
+			.setName("MOC grid columns")
+			.setDesc("Number of columns for the MOC card grid")
+			.addSlider((slider) =>
+				slider
+					.setLimits(1, 4, 1)
+					.setValue(this.plugin.settings.mocGridColumns)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						this.plugin.settings.mocGridColumns = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Recent notes grid columns")
+			.setDesc("Number of columns for the recent notes grid")
+			.addSlider((slider) =>
+				slider
+					.setLimits(1, 4, 1)
+					.setValue(this.plugin.settings.miniGridColumns)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						this.plugin.settings.miniGridColumns = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Show graph links")
+			.setDesc("Inject graph wikilinks on empty code blocks (can be overridden per-block)")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.showGraph)
+					.onChange(async (value) => {
+						this.plugin.settings.showGraph = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
 		containerEl.createEl("p", {
-			text: "Configure the cards shown on your dashboard.",
+			text: "Configure the MOC cards shown on your dashboard.",
 			cls: "setting-item-description",
 		});
 
@@ -434,7 +380,7 @@ export class NexusSettingTab extends PluginSettingTab {
 			);
 
 		// ── Stats section ─────────────────────────────────
-		new Setting(containerEl).setHeading().setName("Stats bar");
+		new Setting(containerEl).setHeading().setName("Stats");
 		containerEl.createEl("p", {
 			text: "Configure which folder counts appear in the stats bar.",
 			cls: "setting-item-description",
@@ -529,8 +475,6 @@ export class NexusSettingTab extends PluginSettingTab {
 					})
 			);
 
-		// ── Divider Design section ────────────────────────
-		new Setting(containerEl).setHeading().setName("Divider design");
 		containerEl.createEl("p", {
 			text: "Customize the appearance of section dividers.",
 			cls: "setting-item-description",
@@ -538,7 +482,7 @@ export class NexusSettingTab extends PluginSettingTab {
 
 		const currentPreset = detectDividerPreset(this.plugin.settings.dividerDesign);
 		new Setting(containerEl)
-			.setName("Style")
+			.setName("Divider style")
 			.setDesc("Choose a divider style preset")
 			.addDropdown((dropdown) => {
 				for (const [key, name] of Object.entries(DIVIDER_PRESET_NAMES)) {
@@ -550,24 +494,13 @@ export class NexusSettingTab extends PluginSettingTab {
 					if (preset) {
 						this.plugin.settings.dividerDesign = { ...preset };
 						await this.plugin.saveSettings();
-						this.renderDividerPreview(containerEl);
-						this.renderDividerAdvanced(containerEl);
+						this.renderDividerPreview(dividerPreviewEl);
 					}
 				});
 			});
 
-		this.renderDividerPreview(containerEl);
-
-		const advancedToggle = containerEl.createEl("button", { cls: `nexus-settings-advanced-toggle ${this.advancedOpen ? "expanded" : ""}` });
-		advancedToggle.innerHTML = `${SVG.chevronRight}<span>Advanced CSS</span>`;
-		advancedToggle.addEventListener("click", () => {
-			this.advancedOpen = !this.advancedOpen;
-			this.display();
-		});
-
-		if (this.advancedOpen) {
-			this.renderDividerAdvanced(containerEl);
-		}
+		const dividerPreviewEl = containerEl.createDiv();
+		this.renderDividerPreview(dividerPreviewEl);
 
 		// ── Export / Import section ────────────────────────
 		new Setting(containerEl).setHeading().setName("Export / Import");
@@ -638,6 +571,16 @@ export class NexusSettingTab extends PluginSettingTab {
 					new Notice("Invalid settings file: missing required fields");
 					return;
 				}
+				const validMocs = data.mocs.every(
+					(m: any) => m && typeof m.path === "string" && typeof m.title === "string"
+				);
+				const validStats = data.stats.every(
+					(s: any) => s && typeof s.folder === "string" && typeof s.label === "string"
+				);
+				if (!validMocs || !validStats) {
+					new Notice("Invalid settings file: malformed entries");
+					return;
+				}
 				const validKeys = Object.keys(DEFAULT_SETTINGS);
 				const filtered: Record<string, any> = {};
 				for (const key of validKeys) {
@@ -659,7 +602,6 @@ export class NexusSettingTab extends PluginSettingTab {
 	// ── MOC Card with drag-and-drop + color picker ────────────
 
 	renderMocCard(containerEl: HTMLElement, moc: MocEntry, index: number): void {
-		const total = this.plugin.settings.mocs.length;
 		const collapsedKey = `nexus_moc_${index}`;
 		const isCollapsed = (this as any)[collapsedKey] !== false;
 
@@ -708,38 +650,15 @@ export class NexusSettingTab extends PluginSettingTab {
 		const arrow = heading.createDiv({ cls: `nexus-settings-moc-arrow ${isCollapsed ? "collapsed" : ""}` });
 		arrow.innerHTML = SVG.chevronDown;
 
-		// Title + path
+		// Title only
 		const titleWrap = heading.createDiv({ cls: "nexus-settings-moc-title" });
 		titleWrap.createEl("span", { text: moc.title || "Untitled" });
-		titleWrap.createEl("span", { cls: "nexus-settings-moc-title-sep", text: " — " });
-		titleWrap.createEl("span", { cls: "nexus-settings-moc-path", text: moc.path });
 
 		// Action buttons
 		const actions = heading.createDiv({ cls: "nexus-settings-moc-actions" });
 
-		const upBtn = this.renderMocBtn(actions, SVG.chevronUp, "", "Move up", index === 0);
-		upBtn.addEventListener("click", async (e) => {
-			e.stopPropagation();
-			if (index > 0) {
-				const arr = this.plugin.settings.mocs;
-				[arr[index - 1], arr[index]] = [arr[index], arr[index - 1]];
-				await this.plugin.saveSettings();
-				this.display();
-			}
-		});
-
-		const downBtn = this.renderMocBtn(actions, SVG.chevronDown, "", "Move down", index === total - 1);
-		downBtn.addEventListener("click", async (e) => {
-			e.stopPropagation();
-			const arr = this.plugin.settings.mocs;
-			if (index < arr.length - 1) {
-				[arr[index], arr[index + 1]] = [arr[index + 1], arr[index]];
-				await this.plugin.saveSettings();
-				this.display();
-			}
-		});
-
-		const removeBtn = this.renderMocBtn(actions, SVG.trash, "nexus-settings-moc-btn--delete", "Remove");
+		const removeBtn = actions.createEl("button", { cls: "nexus-settings-moc-btn--delete", attr: { "aria-label": "Remove" } });
+		setIcon(removeBtn, "trash");
 		removeBtn.addEventListener("click", async (e) => {
 			e.stopPropagation();
 			this.plugin.settings.mocs.splice(index, 1);
@@ -756,18 +675,30 @@ export class NexusSettingTab extends PluginSettingTab {
 		if (isCollapsed) return;
 
 		// Expanded fields
-		new Setting(containerEl)
+		const notePathSetting = new Setting(containerEl)
 			.setName("Note path")
-			.setDesc("Vault path to the MOC note")
-			.addText((text) =>
-				text
-					.setPlaceholder("MOC/My MOC")
-					.setValue(moc.path)
-					.onChange(async (value) => {
-						this.plugin.settings.mocs[index].path = value;
-						await this.plugin.saveSettings();
-					})
-			);
+			.setDesc("Vault path to the MOC note");
+
+		const notePathDatalistId = `nexus-note-paths-${index}`;
+		const notePathInput = notePathSetting.settingEl.createEl("input", {
+			cls: "nexus-note-path-input",
+			attr: {
+				type: "text",
+				placeholder: "MOC/My MOC",
+				value: moc.path,
+				list: notePathDatalistId,
+			},
+		});
+		notePathInput.addEventListener("change", async () => {
+			this.plugin.settings.mocs[index].path = notePathInput.value;
+			await this.plugin.saveSettings();
+		});
+
+		const datalist = notePathSetting.settingEl.createEl("datalist", { attr: { id: notePathDatalistId } });
+		const mdFiles = this.app.vault.getMarkdownFiles();
+		for (const file of mdFiles) {
+			datalist.createEl("option", { attr: { value: file.path } });
+		}
 
 		new Setting(containerEl)
 			.setName("Title")
@@ -823,16 +754,6 @@ export class NexusSettingTab extends PluginSettingTab {
 			);
 	}
 
-	// ── Helper: MOC button ────────────────────────────────────
-
-	private renderMocBtn(parent: HTMLElement, svg: string, className: string, tooltip: string, disabled = false): HTMLButtonElement {
-		const btn = parent.createEl("button", { cls: `nexus-settings-moc-btn ${className}`, attr: { "aria-label": tooltip } });
-		btn.innerHTML = svg;
-		btn.disabled = disabled;
-		btn.setAttr("aria-label", tooltip);
-		return btn;
-	}
-
 	// ── ASCII Preview ──────────────────────────────────────────
 
 	private updateAsciiPreview(): void {
@@ -862,11 +783,12 @@ export class NexusSettingTab extends PluginSettingTab {
 			folders.push(stat.folder);
 			folders.sort();
 		}
+
 		const setting = new Setting(containerEl);
 
-		setting.setName(`Stat ${index + 1}`);
+		setting.setName(stat.label);
 		setting.addDropdown((dropdown) => {
-			dropdown.addOption("", "\u2014 All files (no folder filter) \u2014");
+			dropdown.addOption("", "All files");
 			for (const f of folders) {
 				dropdown.addOption(f, f);
 			}
@@ -874,17 +796,9 @@ export class NexusSettingTab extends PluginSettingTab {
 			dropdown.onChange(async (value) => {
 				this.plugin.settings.stats[index].folder = value;
 				await this.plugin.saveSettings();
+				this.display();
 			});
 		});
-		setting.addText((text) =>
-			text
-				.setPlaceholder("Label")
-				.setValue(stat.label)
-				.onChange(async (value) => {
-					this.plugin.settings.stats[index].label = value;
-					await this.plugin.saveSettings();
-				})
-		);
 		setting.addExtraButton((btn) =>
 			btn
 				.setIcon("trash")
@@ -897,7 +811,7 @@ export class NexusSettingTab extends PluginSettingTab {
 		);
 	}
 
-	// ── Divider preview & advanced ─────────────────────────────
+	// ── Divider preview ───────────────────────────────────────
 
 	private renderDividerPreview(containerEl: HTMLElement): void {
 		const existing = containerEl.querySelector(".nexus-settings-divider-preview");
@@ -920,97 +834,5 @@ export class NexusSettingTab extends PluginSettingTab {
 		const lineRight = row.createDiv({ cls: "nexus-settings-divider-preview-line" });
 		lineRight.style.background = d.gradient;
 		lineRight.style.height = d.lineWidth;
-	}
-
-	private renderDividerAdvanced(containerEl: HTMLElement): void {
-		const existing = containerEl.querySelector(".nexus-settings-advanced-body");
-		if (existing) existing.remove();
-
-		const d = this.plugin.settings.dividerDesign;
-		const body = containerEl.createDiv({ cls: "nexus-settings-advanced-body" });
-
-		new Setting(body)
-			.setName("Line gradient")
-			.setDesc("CSS gradient for the divider lines")
-			.addText((text) =>
-				text
-					.setPlaceholder("linear-gradient(90deg, transparent, var(--background-modifier-border), transparent)")
-					.setValue(d.gradient)
-					.onChange(async (value) => {
-						this.plugin.settings.dividerDesign.gradient = value;
-						await this.plugin.saveSettings();
-						this.renderDividerPreview(containerEl);
-					})
-			);
-
-		new Setting(body)
-			.setName("Line width")
-			.setDesc("Height of the divider line (e.g. 1px, 2px)")
-			.addText((text) =>
-				text
-					.setPlaceholder("1px")
-					.setValue(d.lineWidth)
-					.onChange(async (value) => {
-						this.plugin.settings.dividerDesign.lineWidth = value;
-						await this.plugin.saveSettings();
-						this.renderDividerPreview(containerEl);
-					})
-			);
-
-		new Setting(body)
-			.setName("Label font size")
-			.setDesc("Font size of the divider label (e.g. 0.7rem)")
-			.addText((text) =>
-				text
-					.setPlaceholder("0.7rem")
-					.setValue(d.labelSize)
-					.onChange(async (value) => {
-						this.plugin.settings.dividerDesign.labelSize = value;
-						await this.plugin.saveSettings();
-						this.renderDividerPreview(containerEl);
-					})
-			);
-
-		new Setting(body)
-			.setName("Label font weight")
-			.setDesc("Font weight of the divider label (e.g. 600, 700)")
-			.addText((text) =>
-				text
-					.setPlaceholder("600")
-					.setValue(d.labelWeight)
-					.onChange(async (value) => {
-						this.plugin.settings.dividerDesign.labelWeight = value;
-						await this.plugin.saveSettings();
-						this.renderDividerPreview(containerEl);
-					})
-			);
-
-		new Setting(body)
-			.setName("Label color")
-			.setDesc("CSS color of the divider label")
-			.addText((text) =>
-				text
-					.setPlaceholder("var(--text-muted)")
-					.setValue(d.labelColor)
-					.onChange(async (value) => {
-						this.plugin.settings.dividerDesign.labelColor = value;
-						await this.plugin.saveSettings();
-						this.renderDividerPreview(containerEl);
-					})
-			);
-
-		new Setting(body)
-			.setName("Label letter spacing")
-			.setDesc("Letter spacing of the divider label (e.g. 0.12em)")
-			.addText((text) =>
-				text
-					.setPlaceholder("0.12em")
-					.setValue(d.labelSpacing)
-					.onChange(async (value) => {
-						this.plugin.settings.dividerDesign.labelSpacing = value;
-						await this.plugin.saveSettings();
-						this.renderDividerPreview(containerEl);
-					})
-			);
 	}
 }

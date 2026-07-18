@@ -9,64 +9,63 @@ ASCII art banners + theme-aware dashboard for your Obsidian vault.
 3. Copy the three files into it
 4. Enable the plugin in **Settings > Community Plugins**
 
-## Usage
-
-### Dashboard
+## Quick Start
 
 Create a note with a `nexus-dashboard` code block:
 
-````
+````md
 ```nexus-dashboard
+stats: true
+recently: true
+showGraph: false
+
 header:
   text: MY VAULT
   color: #8A5CF6
 
-toolbar: true
-greeting: true
-stats: true
-
 section:
-  title: Projects
-  divider: true
-  columns: 2
   cards:
     - type: big
-      label: Project Alpha
-      desc: Main project notes
-      path: Project/Alpha
-      icon: Project
+      label: My Note
+      path: folder/Note
+      icon: Note
       color: #FF6B6B
-
-recently: true
-`
+    - type: mini
+      label: Quick Link
+      path: folder/Link
+      icon: Link
+```
 ````
 
-![Dashboard](assets/nexus.png)
+## Standalone Dividers
 
-### ASCII Art
+Place a `divider:` block at the root level (outside any section):
 
+````md
+```nexus-dashboard
+divider:
+  type: bold
+  title: Projects
+```
 ````
+
+Available types: `default`, `bold`, `subtle`, `gradient`, `dashed`
+
+## ASCII Art
+
+````md
 ```ascii
 font: ANSI Shadow
 color: #FF6B6B
 size: 1.5
-My Vault Title
+My Title
 ```
 ````
 
-### Journal Example
-
-Code block:
-
-![Code Block](assets/journal_code_block.png)
-
-Result:
-
-![Journal](assets/journal.png)
-
-### Commands
+## Commands
 
 Open **Ctrl+P** / **Cmd+P** and search:
+
 - `Open dashboard`
 - `Insert Nexus Dashboard code block`
 - `Insert ASCII art block`
@@ -82,10 +81,10 @@ Open **Ctrl+P** / **Cmd+P** and search:
 
 | Key | Values | Default | Description |
 |-----|--------|---------|-------------|
-| `toolbar` | `true`, `false` | `false` | Show quick-action buttons |
-| `greeting` | `true`, `false` | `false` | Show time-of-day greeting |
-| `greetingName` | string | — | Personalized name |
+| `stats` | `true`, `false` | `false` | Show stats bar |
 | `recently` | `true`, `false` | `false` | Show recently modified notes |
+| `showGraph` | `true`, `false` | `false` | Show graph links |
+| `recentCount` | number | `9` | Number of recently modified notes |
 
 #### Header
 
@@ -101,7 +100,7 @@ header:
 | Property | Values | Default |
 |----------|--------|---------|
 | `text` | string | `NEXUS` |
-| `font` | `ANSI Shadow` | `ANSI Shadow` |
+| `font` | `ANSI Shadow`, `Small Slant` | `ANSI Shadow` |
 | `color` | CSS color | `#8A5CF6` |
 | `size` | `normal`, `small` | `normal` |
 | `align` | `left`, `center`, `right` | `center` |
@@ -110,8 +109,6 @@ header:
 
 ```
 section:
-  title: My Section
-  divider: true
   columns: 2
   cards:
     - type: big
@@ -122,11 +119,9 @@ section:
       color: #FF6B6B
 ```
 
-| Property | Values | Default |
-|----------|--------|---------|
-| `title` | string | — |
-| `divider` | `true`, `false` | `false` |
-| `columns` | `2`, `3`, `4` | `2` |
+| Property | Values | Default | Description |
+|----------|--------|---------|-------------|
+| `columns` | `1`, `2`, `3`, `4` | `2` | Number of card columns |
 
 #### Card
 
@@ -139,7 +134,18 @@ section:
 | `icon` | icon name | — |
 | `color` | CSS color | — |
 
-![Cards](assets/project.png)
+#### Divider
+
+```
+divider:
+  type: bold
+  title: Section Title
+```
+
+| Property | Values | Default |
+|----------|--------|---------|
+| `type` | `default`, `bold`, `subtle`, `gradient`, `dashed` | `default` |
+| `title` | string | — |
 
 #### Graph
 
@@ -154,7 +160,7 @@ graph:
 
 | Property | Values | Default |
 |----------|--------|---------|
-| `font` | `ANSI Shadow` | `ANSI Shadow` |
+| `font` | `ANSI Shadow`, `Small Slant` | `ANSI Shadow` |
 | `color` | CSS color | `#8A5CF6` |
 | `size` | number (em) | `1.0` |
 | `align` | `left`, `center`, `right` | `center` |
@@ -165,14 +171,13 @@ graph:
 
 Open **Settings > Nexus Dashboard** to configure defaults:
 
-- **General** — open on startup, greeting, toolbar
-- **Layout** — 2/3-column, Compact, Wide
+- **General** — open on startup, graph links toggle
+- **Layout** — MOC cards (drag-and-drop reorder)
 - **ASCII Header** — title, font, color, size
-- **MOC Cards** — add, remove, reorder (drag-and-drop)
-- **Stats Bar** — folder + label pairs
+- **Stats Bar** — folder + label pairs (click folder to select)
 - **Recently Modified** — count, exclude folders
-- **Divider Design** — 5 presets + advanced CSS
-- **Export/Import** — save/restore settings as JSON
+- **Divider Design** — 5 presets (default, bold, subtle, gradient, dashed)
+- **Export / Import** — save / restore settings as JSON
 
 ## Development
 

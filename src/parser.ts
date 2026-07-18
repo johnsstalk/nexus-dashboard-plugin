@@ -1,5 +1,6 @@
 import {
 	DashboardConfig,
+	DividerBlockConfig,
 	SectionConfig,
 	CardConfig,
 } from "./types";
@@ -11,15 +12,16 @@ export function parseDashboard(raw: string): DashboardConfig {
 	}
 
 	const config: DashboardConfig = {
-		header: { text: "", font: "ANSI Shadow", color: "#8A5CF6", size: "normal", enabled: false },
+		header: { text: "", font: "", color: "", size: "normal", enabled: false },
 		stats: { enabled: false, items: [] },
-		sections: [],
+		blocks: [],
 		recently: false,
 		graph: { enabled: false, exclude: [] },
 	};
 
 	const lines = trimmed.split("\n");
-	let context: "root" | "header" | "stats" | "section" | "cards" | "graph" = "root";
+	let context: "root" | "header" | "stats" | "divider" | "section" | "cards" | "graph" = "root";
+	let currentDivider: DividerBlockConfig | null = null;
 	let currentSection: SectionConfig | null = null;
 	let currentCard: Partial<CardConfig> | null = null;
 
@@ -51,10 +53,20 @@ export function parseDashboard(raw: string): DashboardConfig {
 			context = "graph";
 			continue;
 		}
-		if (t === "section:") {
+		if (t === "divider:") {
+			flushCard();
 			flushSection();
+			flushDivider();
+			context = "divider";
+			currentDivider = { kind: "divider", title: "", type: undefined };
+			continue;
+		}
+		if (t === "section:") {
+			flushCard();
+			flushSection();
+			flushDivider();
 			context = "section";
-			currentSection = { title: "", divider: false, columns: 2, cards: [] };
+			currentSection = { kind: "section", columns: 2, cards: [] };
 			continue;
 		}
 		if (t === "cards:") {
@@ -79,22 +91,11 @@ export function parseDashboard(raw: string): DashboardConfig {
 			config.recently = kv.value === "true";
 			continue;
 		}
-		if (kv.key === "toolbar") {
-			config.toolbar = kv.value === "true";
-			continue;
-		}
-		if (kv.key === "greeting") {
-			config.greeting = kv.value === "true";
-			continue;
-		}
 
 		switch (context) {
-			case "root":
-				applyRootKV(config, kv);
-				break;
 			case "header":
 				if (!config.header.enabled) {
-					config.header = { text: "", font: "ANSI Shadow", color: "#8A5CF6", size: "normal", enabled: true };
+					config.header = { text: "", font: "", color: "", size: "normal", enabled: true };
 				}
 				applyKV(config.header, kv);
 				break;
@@ -103,25 +104,29 @@ export function parseDashboard(raw: string): DashboardConfig {
 					config.stats.enabled = kv.value === "true";
 				}
 				break;
+			case "divider":
+				if (currentDivider) applyDividerKV(currentDivider, kv);
+				break;
 			case "section":
 				if (currentSection) applySectionKV(currentSection, kv);
 				break;
 			case "cards":
 				if (currentCard) applyCardKV(currentCard, kv);
 				break;
-		case "graph":
-			if (kv.key === "exclude") {
-				config.graph.exclude = kv.value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
-			} else {
-				applyKV(config.graph, kv);
-			}
-			break;
+			case "graph":
+				if (kv.key === "exclude") {
+					config.graph.exclude = kv.value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+				} else if (kv.key === "showGraph") {
+					config.graph.enabled = kv.value === "true";
+				}
+				break;
 		}
 	}
 
-	// Flush trailing card and section
+	// Flush trailing card, section, divider
 	flushCard();
 	flushSection();
+	flushDivider();
 
 	return config;
 
@@ -135,15 +140,20 @@ export function parseDashboard(raw: string): DashboardConfig {
 	function flushSection() {
 		flushCard();
 		if (currentSection) {
-			config.sections.push(currentSection);
+			config.blocks.push(currentSection);
 			currentSection = null;
+		} else if (currentCard) {
+			const implicitSection: SectionConfig = { kind: "section", columns: 2, cards: [currentCard as CardConfig] };
+			config.blocks.push(implicitSection);
+			currentCard = null;
 		}
 	}
-}
 
-function applyRootKV(config: DashboardConfig, kv: { key: string; value: string }) {
-	if (kv.key === "recently") {
-		config.recently = kv.value === "true";
+	function flushDivider() {
+		if (currentDivider) {
+			config.blocks.push(currentDivider);
+			currentDivider = null;
+		}
 	}
 }
 
@@ -151,10 +161,16 @@ function applyKV(target: Record<string, any>, kv: { key: string; value: string }
 	target[kv.key] = kv.value;
 }
 
+function applyDividerKV(divider: DividerBlockConfig, kv: { key: string; value: string }) {
+	if (kv.key === "title") divider.title = kv.value;
+	if (kv.key === "type") divider.type = kv.value;
+}
+
 function applySectionKV(section: SectionConfig, kv: { key: string; value: string }) {
-	if (kv.key === "title") section.title = kv.value;
-	if (kv.key === "divider") section.divider = kv.value === "true";
-	if (kv.key === "columns") section.columns = parseInt(kv.value, 10) as 2 | 3 | 4;
+	if (kv.key === "columns") {
+		const n = parseInt(kv.value, 10);
+		section.columns = (Number.isFinite(n) && n >= 1 && n <= 4 ? n : 2) as 1 | 2 | 3 | 4;
+	}
 }
 
 function applyCardKV(card: Partial<CardConfig>, kv: { key: string; value: string }) {
@@ -181,10 +197,8 @@ function parseValue(line: string, prefix: string): string {
 export function buildDefaultConfig(): DashboardConfig {
 	return {
 		header: { text: "", font: "ANSI Shadow", color: "#8A5CF6", size: "normal", enabled: false },
-		toolbar: false,
-		greeting: false,
 		stats: { enabled: false, items: [] },
-		sections: [],
+		blocks: [],
 		recently: false,
 		graph: { enabled: false, exclude: [] },
 	};
