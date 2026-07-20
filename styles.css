@@ -1144,6 +1144,180 @@
 }
 
 /* ============================================================
+   Row Editor
+   ============================================================ */
+
+.nexus-row-editor-preview-section {
+  margin-bottom: 24px;
+}
+
+.nexus-row-editor-section-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-normal);
+  margin-bottom: 12px;
+}
+
+.nexus-row-editor-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  margin-bottom: 16px;
+  overflow: hidden;
+  background: var(--background-primary);
+}
+
+.nexus-row-editor-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--background-secondary);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.nexus-row-editor-card-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.nexus-row-editor-card-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.nexus-row-editor-card-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+}
+
+.nexus-row-editor-card-btn:hover {
+  color: var(--text-error);
+  background: var(--background-modifier-hover);
+}
+
+.nexus-row-editor-visual {
+  display: flex;
+  gap: 6px;
+  padding: 14px;
+  min-height: 52px;
+  align-items: stretch;
+}
+
+.nexus-row-editor-col {
+  background: var(--interactive-accent);
+  opacity: 0.15;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  border: 1px dashed var(--interactive-accent);
+}
+
+.nexus-row-editor-col-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--interactive-accent);
+  opacity: 1;
+}
+
+.nexus-row-editor-fields {
+  padding: 8px 14px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.nexus-row-editor-yaml {
+  padding: 10px 14px;
+  border-top: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+.nexus-row-editor-yaml-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  display: block;
+}
+
+.nexus-row-editor-yaml pre {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ============================================================
+   Tabs Preview (Settings)
+   ============================================================ */
+
+.nexus-tabs-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-secondary);
+}
+
+.nexus-tabs-preview-label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.nexus-tabs-preview-bar {
+  display: flex;
+  gap: 4px;
+}
+
+.nexus-tabs-preview-btn {
+  padding: 5px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-primary);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: default;
+  font-family: inherit;
+}
+
+.nexus-tabs-preview-btn.active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+
+/* ============================================================
+   Code block in settings
+   ============================================================ */
+
+.nexus-settings-code-block {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+  margin: 8px 0 0 0;
+}
+
+/* ============================================================
    Mobile Responsive — New components
    ============================================================ */
 

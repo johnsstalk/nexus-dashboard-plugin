@@ -39,17 +39,22 @@ export function parseDashboard(raw: string): DashboardConfig {
 	let currentDivider: DividerBlockConfig | null = null;
 	let currentSection: SectionConfig | null = null;
 	let currentCard: Partial<CardConfig> | null = null;
-	let currentLinks: LinksConfig | null = null;
-	let currentRow: RowConfig | null = null;
-	let currentTabs: TabsConfig | null = null;
 	let currentTab: TabItem | null = null;
 	let currentSearch: SearchConfig | null = null;
 	let currentRecently: RecentlyConfig | null = null;
 
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i].replace(/\r$/, "");
-		const t = line.trim();
+		let t = line.trim();
 		if (!t || t.startsWith("#")) continue;
+
+		// Strip YAML list prefix for known keywords (e.g. "- section:" → "section:")
+		if (t.startsWith("- ")) {
+			const stripped = t.slice(2);
+			if (/^(header|stats|graph|divider|section|links|row|tabs|search|recently):/.test(stripped)) {
+				t = stripped;
+			}
+		}
 
 		// ── Context switches ──────────────────────────────
 		if (t === "header:") {
@@ -94,14 +99,22 @@ export function parseDashboard(raw: string): DashboardConfig {
 		// ── New block types ──────────────────────────────
 		if (t === "links:") {
 			flushCurrent();
-			context = "links";
-			currentLinks = { kind: "links", items: [] };
+			const parentIndent = line.search(/\S/);
+			// Pre-process: collect all indented children
+			const childLines = collectIndentedLines(lines, i + 1, parentIndent);
+			const parsed = parseLinksBlock(childLines);
+			currentLinks = { kind: "links", items: parsed.items, title: parsed.title, columns: parsed.columns };
+			config.blocks.push(currentLinks);
+			currentLinks = null;
+			i += childLines.length;
+			context = "root";
 			continue;
 		}
 		if (t === "row:") {
 			flushCurrent();
+			const parentIndent = line.search(/\S/);
 			// Pre-process: collect all indented children
-			const childLines = collectIndentedLines(lines, i + 1);
+			const childLines = collectIndentedLines(lines, i + 1, parentIndent);
 			const childBlocks = parseChildBlocks(childLines);
 			currentRow = { kind: "row", children: childBlocks };
 			config.blocks.push(currentRow);
@@ -113,8 +126,9 @@ export function parseDashboard(raw: string): DashboardConfig {
 		}
 		if (t === "tabs:") {
 			flushCurrent();
+			const parentIndent = line.search(/\S/);
 			// Pre-process: collect all indented children
-			const childLines = collectIndentedLines(lines, i + 1);
+			const childLines = collectIndentedLines(lines, i + 1, parentIndent);
 			const tabItems = parseTabItems(childLines);
 			currentTabs = { kind: "tabs", items: tabItems };
 			config.blocks.push(currentTabs);
@@ -200,9 +214,6 @@ export function parseDashboard(raw: string): DashboardConfig {
 					config.graph.enabled = kv.value === "true";
 				}
 				break;
-			case "links":
-				if (currentLinks) applyLinksKV(currentLinks, kv);
-				break;
 			case "search":
 				if (currentSearch) applySearchKV(currentSearch, kv);
 				break;
@@ -221,7 +232,6 @@ export function parseDashboard(raw: string): DashboardConfig {
 		flushCard();
 		flushSection();
 		flushDivider();
-		flushLinks();
 		flushSearch();
 		flushRecently();
 	}
@@ -252,13 +262,6 @@ export function parseDashboard(raw: string): DashboardConfig {
 		}
 	}
 
-	function flushLinks() {
-		if (currentLinks) {
-			config.blocks.push(currentLinks);
-			currentLinks = null;
-		}
-	}
-
 	function flushSearch() {
 		if (currentSearch) {
 			config.search = currentSearch;
@@ -276,18 +279,19 @@ export function parseDashboard(raw: string): DashboardConfig {
 
 // ── Indent-based child extraction ────────────────────────
 
-/** Collect lines that are indented more than the starting position */
-function collectIndentedLines(allLines: string[], startIdx: number): string[] {
+/** Collect lines that are indented more than the parent keyword's indent */
+function collectIndentedLines(allLines: string[], startIdx: number, parentIndent: number = -1): string[] {
 	const collected: string[] = [];
 	if (startIdx >= allLines.length) return collected;
 
-	// Determine base indent from first non-empty line
-	let baseIndent = -1;
-	for (let j = startIdx; j < allLines.length; j++) {
-		const raw = allLines[j].replace(/\r$/, "");
-		if (raw.trim() === "" || raw.trim().startsWith("#")) continue;
-		baseIndent = raw.search(/\S/);
-		break;
+	let baseIndent = parentIndent;
+	if (baseIndent === -1) {
+		for (let j = startIdx; j < allLines.length; j++) {
+			const raw = allLines[j].replace(/\r$/, "");
+			if (raw.trim() === "" || raw.trim().startsWith("#")) continue;
+			baseIndent = raw.search(/\S/);
+			break;
+		}
 	}
 	if (baseIndent === -1) return collected;
 
@@ -348,59 +352,158 @@ function parseTabItems(childLines: string[]): TabItem[] {
 	}
 	if (baseIndent === -1) return items;
 
-	// Split into tab entries: each "- label:" starts a new tab
-	let currentTabLabel = "";
+	// Split into tab entries: each "- title:" or "- label:" starts a new tab
+	let currentTabTitle = "";
 	let currentTabLines: string[] = [];
 	let tabIndent = -1;
 
 	for (const raw of childLines) {
 		const t = raw.trim();
 		if (t === "" || t.startsWith("#")) {
-			if (currentTabLabel) currentTabLines.push(raw);
+			if (currentTabTitle) currentTabLines.push(raw);
 			continue;
 		}
 		const indent = raw.search(/\S/);
 
-		// Check if this is a tab entry (- label: ...)
-		if (t.startsWith("- label:") || t.startsWith("- label :")) {
+		// Check if this is a tab entry (- title: ... or - label: ...)
+		const isTabEntry = t.startsWith("- title:") || t.startsWith("- title :") || t.startsWith("- label:") || t.startsWith("- label :");
+		if (isTabEntry) {
 			// Save previous tab
-			if (currentTabLabel) {
+			if (currentTabTitle) {
 				const tabBlocks = parseChildBlocks(currentTabLines);
 				items.push({
 					id: `tab-${items.length}`,
-					label: currentTabLabel,
+					label: currentTabTitle,
 					blocks: tabBlocks,
 				});
 			}
-			currentTabLabel = parseValue(t, t.startsWith("- label:") ? "- label:" : "- label :");
+			const prefix = t.startsWith("- title") ? (t.startsWith("- title:") ? "- title:" : "- title :") : (t.startsWith("- label:") ? "- label:" : "- label :");
+			currentTabTitle = parseValue(t, prefix);
 			currentTabLines = [];
 			tabIndent = indent;
-		} else if (currentTabLabel && indent > tabIndent) {
+		} else if (currentTabTitle && indent > tabIndent) {
 			currentTabLines.push(raw);
-		} else if (currentTabLabel && indent <= tabIndent) {
+		} else if (currentTabTitle && indent <= tabIndent) {
 			// End of current tab's content
 			const tabBlocks = parseChildBlocks(currentTabLines);
 			items.push({
 				id: `tab-${items.length}`,
-				label: currentTabLabel,
+				label: currentTabTitle,
 				blocks: tabBlocks,
 			});
-			currentTabLabel = "";
+			currentTabTitle = "";
 			currentTabLines = [];
+			// Re-process this line in case it's another tab entry
+			const t2 = raw.trim();
+			if (t2.startsWith("- title:") || t2.startsWith("- title :") || t2.startsWith("- label:") || t2.startsWith("- label :")) {
+				const prefix2 = t2.startsWith("- title") ? (t2.startsWith("- title:") ? "- title:" : "- title :") : (t2.startsWith("- label:") ? "- label:" : "- label :");
+				currentTabTitle = parseValue(t2, prefix2);
+				currentTabLines = [];
+				tabIndent = indent;
+			}
 		}
 	}
 
 	// Flush last tab
-	if (currentTabLabel) {
+	if (currentTabTitle) {
 		const tabBlocks = parseChildBlocks(currentTabLines);
 		items.push({
 			id: `tab-${items.length}`,
-			label: currentTabLabel,
+			label: currentTabTitle,
 			blocks: tabBlocks,
 		});
 	}
 
 	return items;
+}
+
+/** Parse collected indented lines as a Links block with items list */
+function parseLinksBlock(childLines: string[]): { title?: string; columns?: 1 | 2 | 3 | 4; items: LinkItem[] } {
+	const result: { title?: string; columns?: 1 | 2 | 3 | 4; items: LinkItem[] } = { items: [] };
+	if (childLines.length === 0) return result;
+
+	let baseIndent = -1;
+	for (const raw of childLines) {
+		const t = raw.trim();
+		if (t === "" || t.startsWith("#")) continue;
+		baseIndent = raw.search(/\S/);
+		break;
+	}
+	if (baseIndent === -1) return result;
+
+	// Find items: line index and its indent
+	let itemsIdx = -1;
+	let itemsIndent = -1;
+	for (let j = 0; j < childLines.length; j++) {
+		const t = childLines[j].trim();
+		if (t === "items:" || t === "items :") {
+			itemsIdx = j;
+			itemsIndent = childLines[j].search(/\S/);
+			break;
+		}
+	}
+
+	// Parse direct properties (before items:)
+	const limit = itemsIdx === -1 ? childLines.length : itemsIdx;
+	for (let j = 0; j < limit; j++) {
+		const t = childLines[j].trim();
+		if (!t || t.startsWith("#")) continue;
+		const kv = splitKV(t);
+		if (!kv) continue;
+		if (kv.key === "title") result.title = kv.value;
+		if (kv.key === "columns") {
+			const n = parseInt(kv.value, 10);
+			result.columns = (Number.isFinite(n) && n >= 1 && n <= 4 ? n : 3) as 1 | 2 | 3 | 4;
+		}
+	}
+
+	// Parse items list (after items:)
+	if (itemsIdx >= 0) {
+		let currentItem: Partial<LinkItem> | null = null;
+		let itemIndent = -1;
+
+		for (let j = itemsIdx + 1; j < childLines.length; j++) {
+			const raw = childLines[j];
+			const t = raw.trim();
+			if (!t || t.startsWith("#")) continue;
+			const indent = raw.search(/\S/);
+
+			// Left the items block
+			if (indent <= itemsIndent && !t.startsWith("- ")) break;
+
+			// New item entry: "- url: ..." or "- label: ..." at indent > itemsIndent
+			if (t.startsWith("- ") && indent > itemsIndent) {
+				// Flush previous item
+				if (currentItem && (currentItem.url || currentItem.label)) {
+					result.items.push(currentItem as LinkItem);
+				}
+				currentItem = {};
+				itemIndent = indent;
+				// Parse the kv after "- "
+				const inner = t.slice(2);
+				const kv = splitKV(inner);
+				if (kv) {
+					if (kv.key === "url") currentItem.url = kv.value;
+					if (kv.key === "label") currentItem.label = kv.value;
+					if (kv.key === "icon") currentItem.icon = kv.value;
+				}
+			} else if (currentItem && indent >= itemIndent) {
+				// Sub-property of current item
+				const kv = splitKV(t);
+				if (kv) {
+					if (kv.key === "url") currentItem.url = kv.value;
+					if (kv.key === "label") currentItem.label = kv.value;
+					if (kv.key === "icon") currentItem.icon = kv.value;
+				}
+			}
+		}
+		// Flush last item
+		if (currentItem && (currentItem.url || currentItem.label)) {
+			result.items.push(currentItem as LinkItem);
+		}
+	}
+
+	return result;
 }
 
 /** Determine if `recently:` at this line is the root-level boolean form */

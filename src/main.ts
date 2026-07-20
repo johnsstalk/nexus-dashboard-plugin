@@ -173,6 +173,8 @@ export default class NexusDashboardPlugin extends Plugin {
 			recentTags: typeof data?.recentTags === "string" ? data.recentTags : DEFAULT_SETTINGS.recentTags,
 			quickLinks: data?.quickLinks && Array.isArray(data.quickLinks) ? data.quickLinks.map((l: any) => ({ ...l })) : DEFAULT_SETTINGS.quickLinks.map((l) => ({ ...l })),
 			rowSizes: data?.rowSizes && typeof data.rowSizes === "object" ? { ...data.rowSizes } : {},
+			rowLayouts: data?.rowLayouts && Array.isArray(data.rowLayouts) ? data.rowLayouts.map((r: any) => ({ ...r })) : [],
+			tabs: data?.tabs && Array.isArray(data.tabs) ? data.tabs.map((t: any) => ({ ...t })) : [],
 		};
 	}
 

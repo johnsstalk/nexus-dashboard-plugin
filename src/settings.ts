@@ -18,6 +18,17 @@ export interface QuickLinkEntry {
 	icon: string;
 }
 
+export interface RowLayoutEntry {
+	name: string;
+	columns: 1 | 2 | 3 | 4;
+	proportion: string;
+	align: "top" | "center" | "stretch";
+}
+
+export interface TabEntry {
+	label: string;
+}
+
 export interface StatEntry {
 	folder: string;
 	label: string;
@@ -57,6 +68,8 @@ export interface NexusSettings {
 	recentTags: string;
 	quickLinks: QuickLinkEntry[];
 	rowSizes: Record<string, string>;
+	rowLayouts: RowLayoutEntry[];
+	tabs: TabEntry[];
 }
 
 export const DEFAULT_MOCS: MocEntry[] = [
@@ -110,6 +123,8 @@ export const DEFAULT_SETTINGS: NexusSettings = {
 	recentTags: "",
 	quickLinks: [],
 	rowSizes: {},
+	rowLayouts: [],
+	tabs: [],
 };
 
 function deepCloneDefaults(): NexusSettings {
@@ -120,6 +135,8 @@ function deepCloneDefaults(): NexusSettings {
 		dividerDesign: { ...DEFAULT_SETTINGS.dividerDesign },
 		quickLinks: DEFAULT_SETTINGS.quickLinks.map((l) => ({ ...l })),
 		rowSizes: { ...DEFAULT_SETTINGS.rowSizes },
+		rowLayouts: DEFAULT_SETTINGS.rowLayouts.map((r) => ({ ...r })),
+		tabs: DEFAULT_SETTINGS.tabs.map((t) => ({ ...t })),
 	};
 }
 
@@ -245,9 +262,24 @@ class ConfirmModal extends Modal {
 
 // ── Settings Tab ───────────────────────────────────────────────
 
+interface SettingTab {
+	id: string;
+	name: string;
+	icon: string;
+}
+
+const SETTING_TABS: SettingTab[] = [
+	{ id: "general", name: "General", icon: "gear" },
+	{ id: "header", name: "Header", icon: "type" },
+	{ id: "layout", name: "Layout", icon: "layout-grid" },
+	{ id: "row-editor", name: "Row Editor", icon: "columns-3" },
+	{ id: "recent-links", name: "Recent & Links", icon: "clock" },
+];
+
 export class NexusSettingTab extends PluginSettingTab {
 	plugin: NexusDashboardPlugin;
 	private draggedIndex: number | null = null;
+	private activeTab = "general";
 
 	constructor(app: App, plugin: NexusDashboardPlugin) {
 		super(app, plugin);
@@ -265,9 +297,47 @@ export class NexusSettingTab extends PluginSettingTab {
 			cls: "nexus-settings-logo",
 		});
 
-		// ── General section ──────────────────────────────
-		new Setting(containerEl).setHeading().setName("General");
+		// ── Tab bar ──────────────────────────────────────
+		const tabBar = containerEl.createDiv({ cls: "nexus-settings-tabs" });
+		for (const tab of SETTING_TABS) {
+			const tabEl = tabBar.createDiv({
+				cls: `nexus-settings-tab ${tab.id === this.activeTab ? "active" : ""}`,
+			});
+			setIcon(tabEl, tab.icon);
+			tabEl.createEl("span", { text: tab.name });
+			tabEl.addEventListener("click", () => {
+				this.activeTab = tab.id;
+				this.display();
+			});
+		}
 
+		// ── Tab content ──────────────────────────────────
+		const content = containerEl.createDiv({ cls: "nexus-settings-content" });
+
+		switch (this.activeTab) {
+			case "general":
+				this.displayGeneralTab(content);
+				break;
+			case "header":
+				this.displayHeaderTab(content);
+				break;
+			case "layout":
+				this.displayLayoutTab(content);
+				break;
+			case "row-editor":
+				this.displayRowEditorTab(content);
+				break;
+			case "recent-links":
+				this.displayRecentLinksTab(content);
+				break;
+		}
+	}
+
+	// ═══════════════════════════════════════════════════════
+	//  TAB: General
+	// ═══════════════════════════════════════════════════════
+
+	private displayGeneralTab(containerEl: HTMLElement): void {
 		new Setting(containerEl)
 			.setName("Open on startup")
 			.setDesc("Automatically open the dashboard when Obsidian starts")
@@ -292,10 +362,94 @@ export class NexusSettingTab extends PluginSettingTab {
 					})
 			);
 
-		// ── ASCII Header section ──────────────────────────
-		new Setting(containerEl).setHeading().setName("ASCII header");
+		// ── Stats ──────────────────────────────────────
+		new Setting(containerEl).setHeading().setName("Stats");
+
+		new Setting(containerEl)
+			.setName("Show stats bar")
+			.setDesc("Toggle stats bar visibility on the dashboard")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.showStats)
+					.onChange(async (value) => {
+						this.plugin.settings.showStats = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		this.plugin.settings.stats.forEach((stat, i) => {
+			this.renderStatRow(containerEl, stat, i);
+		});
+
+		new Setting(containerEl)
+			.setName("Add stat")
+			.setDesc("Add a new counter to the stats bar.")
+			.addButton((btn) =>
+				btn
+					.setButtonText("+ Add Stat")
+					.setCta()
+					.onClick(async () => {
+						this.plugin.settings.stats.push({ folder: "", label: "New" });
+						await this.plugin.saveSettings();
+						this.display();
+					})
+			);
+
+		// ── Export / Import ─────────────────────────────
+		new Setting(containerEl).setHeading().setName("Export / Import");
+
+		new Setting(containerEl)
+			.setName("Export settings")
+			.setDesc("Download your current settings as a JSON file")
+			.addButton((btn) =>
+				btn
+					.setButtonText("Export")
+					.setCta()
+					.onClick(() => this.exportSettings())
+			);
+
+		new Setting(containerEl)
+			.setName("Import settings")
+			.setDesc("Load settings from a previously exported JSON file")
+			.addButton((btn) =>
+				btn
+					.setButtonText("Import")
+					.setWarning()
+					.onClick(() => this.importSettings())
+			);
+
+		// ── Reset ──────────────────────────────────────
+		new Setting(containerEl).setHeading().setName("Reset");
+
+		new Setting(containerEl)
+			.setName("Reset to defaults")
+			.setDesc("Restore all MOC cards, stats, and layout to the original defaults.")
+			.addButton((btn) =>
+				btn
+					.setButtonText("Reset all settings")
+					.setWarning()
+					.onClick(() => {
+						new ConfirmModal(
+							this.app,
+							"Reset all settings?",
+							"This will restore all MOC cards, stats, and layout to the original defaults. This cannot be undone.",
+							async () => {
+								this.plugin.settings = deepCloneDefaults();
+								await this.plugin.saveSettings();
+								this.display();
+							}
+						).open();
+					})
+			);
+	}
+
+	// ═══════════════════════════════════════════════════════
+	//  TAB: Header
+	// ═══════════════════════════════════════════════════════
+
+	private displayHeaderTab(containerEl: HTMLElement): void {
 		containerEl.createEl("p", {
-			text: "Configure the default appearance of ```ascii code blocks.",
+			text: "Configure the default appearance of the ASCII art header.",
 			cls: "setting-item-description",
 		});
 
@@ -392,10 +546,13 @@ export class NexusSettingTab extends PluginSettingTab {
 		// Preview
 		const previewContainer = containerEl.createDiv({ cls: "nexus-settings-preview" });
 		this.renderAsciiPreview(previewContainer);
+	}
 
-		// ── Layout section ───────────────────────────────
-		new Setting(containerEl).setHeading().setName("Layout");
+	// ═══════════════════════════════════════════════════════
+	//  TAB: Layout
+	// ═══════════════════════════════════════════════════════
 
+	private displayLayoutTab(containerEl: HTMLElement): void {
 		new Setting(containerEl)
 			.setName("MOC grid columns")
 			.setDesc("Number of columns for the MOC card grid")
@@ -436,6 +593,8 @@ export class NexusSettingTab extends PluginSettingTab {
 					})
 			);
 
+		// ── MOC Cards ──────────────────────────────────
+		new Setting(containerEl).setHeading().setName("MOC cards");
 		containerEl.createEl("p", {
 			text: "Configure the MOC cards shown on your dashboard.",
 			cls: "setting-item-description",
@@ -464,44 +623,291 @@ export class NexusSettingTab extends PluginSettingTab {
 					})
 			);
 
-		// ── Stats section ─────────────────────────────────
-		new Setting(containerEl).setHeading().setName("Stats");
+		// ── Tabs builder ───────────────────────────────
+		new Setting(containerEl).setHeading().setName("Tabs");
 		containerEl.createEl("p", {
-			text: "Configure which folder counts appear in the stats bar.",
+			text: "Define tabs for the dashboard (empty code block only). Tabs group content behind clickable buttons.",
 			cls: "setting-item-description",
 		});
 
-		new Setting(containerEl)
-			.setName("Show stats bar")
-			.setDesc("Toggle stats bar visibility on the dashboard")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showStats)
+		const tabs = this.plugin.settings.tabs;
+
+		// Visual tab bar preview
+		if (tabs.length > 0) {
+			const tabPreview = containerEl.createDiv({ cls: "nexus-tabs-preview" });
+			tabPreview.createEl("span", { text: "Preview: ", cls: "nexus-tabs-preview-label" });
+			const tabBar = tabPreview.createDiv({ cls: "nexus-tabs-preview-bar" });
+			for (let i = 0; i < tabs.length; i++) {
+				const tabBtn = tabBar.createEl("button", {
+					cls: `nexus-tabs-preview-btn ${i === 0 ? "active" : ""}`,
+					text: tabs[i].label || `Tab ${i + 1}`,
+				});
+			}
+		}
+
+		// Tab list
+		for (let i = 0; i < tabs.length; i++) {
+			const tab = tabs[i];
+			const setting = new Setting(containerEl);
+			setting.setName(tab.label || `Tab ${i + 1}`);
+			setting.addText((text) =>
+				text
+					.setPlaceholder("Tab label")
+					.setValue(tab.label)
 					.onChange(async (value) => {
-						this.plugin.settings.showStats = value;
+						this.plugin.settings.tabs[i].label = value;
 						await this.plugin.saveSettings();
 					})
 			);
-
-		this.plugin.settings.stats.forEach((stat, i) => {
-			this.renderStatRow(containerEl, stat, i);
-		});
+			setting.addExtraButton((btn) =>
+				btn
+					.setIcon("trash")
+					.setTooltip("Remove tab")
+					.onClick(async () => {
+						this.plugin.settings.tabs.splice(i, 1);
+						await this.plugin.saveSettings();
+						this.display();
+					})
+			);
+		}
 
 		new Setting(containerEl)
-			.setName("Add stat")
-			.setDesc("Add a new counter to the stats bar.")
+			.setName("Add tab")
+			.setDesc("Add a new tab to the dashboard")
 			.addButton((btn) =>
 				btn
-					.setButtonText("+ Add Stat")
+					.setButtonText("+ Add Tab")
 					.setCta()
 					.onClick(async () => {
-						this.plugin.settings.stats.push({ folder: "", label: "New" });
+						this.plugin.settings.tabs.push({ label: `Tab ${tabs.length + 1}` });
 						await this.plugin.saveSettings();
 						this.display();
 					})
 			);
 
-		// ── Recently Modified section ─────────────────────
+		// YAML reference
+		if (tabs.length > 0) {
+			new Setting(containerEl).setHeading().setName("YAML reference");
+			containerEl.createEl("p", {
+				text: "Copy this into your code block to use these tabs:",
+				cls: "setting-item-description",
+			});
+			const yamlLines = [`tabs:`];
+			for (const tab of tabs) {
+				yamlLines.push(`  - label: "${tab.label}"`);
+				yamlLines.push(`    blocks: []`);
+			}
+			const codeEl = containerEl.createEl("pre", { cls: "nexus-settings-code-block" });
+			codeEl.createEl("code", { text: yamlLines.join("\n") });
+		}
+	}
+
+	// ═══════════════════════════════════════════════════════
+	//  TAB: Row Editor
+	// ═══════════════════════════════════════════════════════
+
+	private displayRowEditorTab(containerEl: HTMLElement): void {
+		containerEl.createEl("p", {
+			text: "Define reusable row layouts. Each row places content side-by-side in columns. Use these in code blocks to structure your dashboard.",
+			cls: "setting-item-description",
+		});
+
+		const layouts = this.plugin.settings.rowLayouts;
+
+		// ── Visual preview of all layouts ─────────────────
+		if (layouts.length > 0) {
+			const previewSection = containerEl.createDiv({ cls: "nexus-row-editor-preview-section" });
+			previewSection.createEl("h4", { text: "Layout Preview", cls: "nexus-row-editor-section-title" });
+
+			for (let i = 0; i < layouts.length; i++) {
+				this.renderRowLayoutCard(previewSection, layouts[i], i);
+			}
+		}
+
+		// ── Add layout ───────────────────────────────────
+		new Setting(containerEl).setHeading().setName("Add layout");
+
+		new Setting(containerEl)
+			.setName("New row layout")
+			.setDesc("Create a new row layout template")
+			.addButton((btn) =>
+				btn
+					.setButtonText("+ Add Layout")
+					.setCta()
+					.onClick(async () => {
+						const n = layouts.length + 1;
+						layouts.push({
+							name: `Layout ${n}`,
+							columns: 2,
+							proportion: "50/50",
+							align: "top",
+						});
+						await this.plugin.saveSettings();
+						this.display();
+					})
+			);
+
+		// ── YAML reference ────────────────────────────────
+		new Setting(containerEl).setHeading().setName("YAML reference");
+		containerEl.createEl("p", {
+			text: "Use row layouts in code blocks with the row: keyword:",
+			cls: "setting-item-description",
+		});
+		const codeEl = containerEl.createEl("pre", { cls: "nexus-settings-code-block" });
+		codeEl.createEl("code", {
+			text: `row:\n  - section:\n      columns: 2\n      cards:\n        - label: Left\n          path: Left.md\n  - section:\n      columns: 1\n      cards:\n        - label: Right\n          path: Right.md`,
+		});
+
+		// ── Saved row proportions (from drag resize) ──────
+		const rowSizes = this.plugin.settings.rowSizes;
+		const sizeKeys = Object.keys(rowSizes);
+		if (sizeKeys.length > 0) {
+			new Setting(containerEl).setHeading().setName("Saved row proportions");
+			containerEl.createEl("p", {
+				text: "These proportions were saved by dragging column dividers in the dashboard.",
+				cls: "setting-item-description",
+			});
+			for (const key of sizeKeys) {
+				const val = rowSizes[key];
+				new Setting(containerEl)
+					.setName(key)
+					.setDesc(`Proportion: ${val}`)
+					.addButton((btn) =>
+						btn
+							.setButtonText("Reset")
+							.setWarning()
+							.onClick(async () => {
+								delete this.plugin.settings.rowSizes[key];
+								await this.plugin.saveSettings();
+								this.display();
+							})
+					);
+			}
+		}
+	}
+
+	private renderRowLayoutCard(containerEl: HTMLElement, layout: RowLayoutEntry, index: number): void {
+		const card = containerEl.createDiv({ cls: "nexus-row-editor-card" });
+
+		// Header with name + actions
+		const header = card.createDiv({ cls: "nexus-row-editor-card-header" });
+		const nameEl = header.createEl("span", { text: layout.name, cls: "nexus-row-editor-card-name" });
+
+		const actions = header.createDiv({ cls: "nexus-row-editor-card-actions" });
+
+		// Delete button
+		const deleteBtn = actions.createEl("button", { cls: "nexus-row-editor-card-btn" });
+		setIcon(deleteBtn, "trash");
+		deleteBtn.addEventListener("click", async () => {
+			this.plugin.settings.rowLayouts.splice(index, 1);
+			await this.plugin.saveSettings();
+			this.display();
+		});
+
+		// Visual row preview
+		const preview = card.createDiv({ cls: "nexus-row-editor-visual" });
+		const cols = layout.columns;
+		const parts = layout.proportion.split("/").map((s) => parseInt(s.trim(), 10));
+
+		for (let i = 0; i < cols; i++) {
+			const colEl = preview.createDiv({ cls: "nexus-row-editor-col" });
+			const width = (Number.isFinite(parts[i]) && parts[i]! > 0) ? parts[i]! : Math.floor(100 / cols);
+			colEl.style.width = `${width}%`;
+			colEl.createEl("span", { text: `${width}%`, cls: "nexus-row-editor-col-label" });
+		}
+
+		// Edit fields
+		const fields = card.createDiv({ cls: "nexus-row-editor-fields" });
+
+		// Name
+		const nameSetting = new Setting(fields);
+		nameSetting.setName("Name");
+		nameSetting.addText((text) =>
+			text
+				.setPlaceholder("Layout name")
+				.setValue(layout.name)
+				.onChange(async (value) => {
+					this.plugin.settings.rowLayouts[index].name = value || `Layout ${index + 1}`;
+					nameEl.textContent = value || `Layout ${index + 1}`;
+					await this.plugin.saveSettings();
+				})
+		);
+
+		// Columns
+		const colSetting = new Setting(fields);
+		colSetting.setName("Columns");
+		colSetting.addSlider((slider) =>
+			slider
+				.setLimits(1, 4, 1)
+				.setValue(layout.columns)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					const newCols = value as 1 | 2 | 3 | 4;
+					this.plugin.settings.rowLayouts[index].columns = newCols;
+					// Recalculate proportion to match column count
+					const part = Math.floor(100 / newCols);
+					const newParts: number[] = [];
+					for (let j = 0; j < newCols - 1; j++) {
+						newParts.push(part);
+					}
+					newParts.push(100 - part * (newCols - 1));
+					const newProp = newParts.join("/");
+					this.plugin.settings.rowLayouts[index].proportion = newProp;
+					await this.plugin.saveSettings();
+					this.display();
+				})
+		);
+
+		// Proportion
+		const propSetting = new Setting(fields);
+		propSetting.setName("Proportion");
+		propSetting.setDesc("Slash-separated widths (e.g. 33/67 for 1:2)");
+		propSetting.addText((text) =>
+			text
+				.setPlaceholder("50/50")
+				.setValue(layout.proportion)
+				.onChange(async (value) => {
+					this.plugin.settings.rowLayouts[index].proportion = value;
+					await this.plugin.saveSettings();
+				})
+		);
+
+		// Alignment
+		const alignSetting = new Setting(fields);
+		alignSetting.setName("Vertical align");
+		alignSetting.addDropdown((dropdown) => {
+			dropdown.addOption("top", "Top");
+			dropdown.addOption("center", "Center");
+			dropdown.addOption("stretch", "Stretch");
+			dropdown.setValue(layout.align);
+			dropdown.onChange(async (value) => {
+				this.plugin.settings.rowLayouts[index].align = value as "top" | "center" | "stretch";
+				await this.plugin.saveSettings();
+			});
+		});
+
+		// YAML snippet
+		const yamlEl = card.createDiv({ cls: "nexus-row-editor-yaml" });
+		yamlEl.createEl("span", { text: "YAML", cls: "nexus-row-editor-yaml-label" });
+		const proportion = layout.proportion;
+		const yamlLines = [`row:`, `  proportion: "${proportion}"`];
+		if (layout.align !== "top") {
+			yamlLines.push(`  align: ${layout.align}`);
+		}
+		for (let i = 0; i < layout.columns; i++) {
+			yamlLines.push(`  - section:`);
+			yamlLines.push(`      columns: 1`);
+			yamlLines.push(`      cards: []`);
+		}
+		yamlEl.createEl("pre", { text: yamlLines.join("\n"), cls: "nexus-settings-code-block" });
+	}
+
+	// ═══════════════════════════════════════════════════════
+	//  TAB: Recent & Links
+	// ═══════════════════════════════════════════════════════
+
+	private displayRecentLinksTab(containerEl: HTMLElement): void {
+		// ── Recently Modified ──────────────────────────
 		new Setting(containerEl).setHeading().setName("Recently modified");
 
 		new Setting(containerEl)
@@ -573,34 +979,8 @@ export class NexusSettingTab extends PluginSettingTab {
 					})
 			);
 
-		// ── Quick Links section ─────────────────────────────
-		new Setting(containerEl).setHeading().setName("Quick Links");
-		containerEl.createEl("p", {
-			text: "Configure the quick links shown on the dashboard (empty code block only).",
-			cls: "setting-item-description",
-		});
-
-		this.plugin.settings.quickLinks.forEach((link, i) => {
-			this.renderQuickLink(containerEl, link, i);
-		});
-
-		new Setting(containerEl)
-			.setName("Add link")
-			.setDesc("Add a new quick link to the dashboard.")
-			.addButton((btn) =>
-				btn
-					.setButtonText("+ Add Link")
-					.setCta()
-					.onClick(async () => {
-						this.plugin.settings.quickLinks.push({
-							label: "New Link",
-							url: "https://example.com",
-							icon: "Link",
-						});
-						await this.plugin.saveSettings();
-						this.display();
-					})
-			);
+		// ── Divider ────────────────────────────────────
+		new Setting(containerEl).setHeading().setName("Divider");
 
 		new Setting(containerEl)
 			.setName("Divider label")
@@ -642,50 +1022,32 @@ export class NexusSettingTab extends PluginSettingTab {
 		const dividerPreviewEl = containerEl.createDiv();
 		this.renderDividerPreview(dividerPreviewEl);
 
-		// ── Export / Import section ────────────────────────
-		new Setting(containerEl).setHeading().setName("Export / Import");
+		// ── Quick Links ────────────────────────────────
+		new Setting(containerEl).setHeading().setName("Quick Links");
+		containerEl.createEl("p", {
+			text: "Configure the quick links shown on the dashboard (empty code block only).",
+			cls: "setting-item-description",
+		});
+
+		this.plugin.settings.quickLinks.forEach((link, i) => {
+			this.renderQuickLink(containerEl, link, i);
+		});
 
 		new Setting(containerEl)
-			.setName("Export settings")
-			.setDesc("Download your current settings as a JSON file")
+			.setName("Add link")
+			.setDesc("Add a new quick link to the dashboard.")
 			.addButton((btn) =>
 				btn
-					.setButtonText("Export")
+					.setButtonText("+ Add Link")
 					.setCta()
-					.onClick(() => this.exportSettings())
-			);
-
-		new Setting(containerEl)
-			.setName("Import settings")
-			.setDesc("Load settings from a previously exported JSON file")
-			.addButton((btn) =>
-				btn
-					.setButtonText("Import")
-					.setWarning()
-					.onClick(() => this.importSettings())
-			);
-
-		// ── Reset section ─────────────────────────────────
-		new Setting(containerEl).setHeading().setName("Reset");
-
-		new Setting(containerEl)
-			.setName("Reset to defaults")
-			.setDesc("Restore all MOC cards, stats, and layout to the original defaults.")
-			.addButton((btn) =>
-				btn
-					.setButtonText("Reset all settings")
-					.setWarning()
-					.onClick(() => {
-						new ConfirmModal(
-							this.app,
-							"Reset all settings?",
-							"This will restore all MOC cards, stats, and layout to the original defaults. This cannot be undone.",
-							async () => {
-								this.plugin.settings = deepCloneDefaults();
-								await this.plugin.saveSettings();
-								this.display();
-							}
-						).open();
+					.onClick(async () => {
+						this.plugin.settings.quickLinks.push({
+							label: "New Link",
+							url: "https://example.com",
+							icon: "Link",
+						});
+						await this.plugin.saveSettings();
+						this.display();
 					})
 			);
 	}
