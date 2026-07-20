@@ -1,14 +1,24 @@
 import {
 	DashboardConfig,
+	DashboardBlock,
 	DividerBlockConfig,
 	SectionConfig,
 	CardConfig,
+	LinksConfig,
+	LinkItem,
+	RowConfig,
+	TabsConfig,
+	TabItem,
+	RecentlyConfig,
+	SearchConfig,
 } from "./types";
 
 /** Auto-append .md to extension-free paths */
 function ensureExt(path: string): string {
 	return /\.\w{1,10}$/.test(path) ? path : path + ".md";
 }
+
+type ParseContext = "root" | "header" | "stats" | "divider" | "section" | "cards" | "graph" | "links" | "row" | "tabs" | "search" | "recently";
 
 export function parseDashboard(raw: string): DashboardConfig {
 	const trimmed = raw.trim();
@@ -25,57 +35,104 @@ export function parseDashboard(raw: string): DashboardConfig {
 	};
 
 	const lines = trimmed.split("\n");
-	let context: "root" | "header" | "stats" | "divider" | "section" | "cards" | "graph" = "root";
+	let context: ParseContext = "root";
 	let currentDivider: DividerBlockConfig | null = null;
 	let currentSection: SectionConfig | null = null;
 	let currentCard: Partial<CardConfig> | null = null;
+	let currentLinks: LinksConfig | null = null;
+	let currentRow: RowConfig | null = null;
+	let currentTabs: TabsConfig | null = null;
+	let currentTab: TabItem | null = null;
+	let currentSearch: SearchConfig | null = null;
+	let currentRecently: RecentlyConfig | null = null;
 
-	for (const rawLine of lines) {
-		const line = rawLine.replace(/\r$/, "");
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i].replace(/\r$/, "");
 		const t = line.trim();
 		if (!t || t.startsWith("#")) continue;
 
 		// ── Context switches ──────────────────────────────
 		if (t === "header:") {
-			flushCard();
+			flushCurrent();
 			context = "header";
 			continue;
 		}
 		if (t.startsWith("stats:") && t.length > 6) {
-			flushCard();
+			flushCurrent();
 			const val = t.slice(6).trim();
 			config.stats.enabled = val === "true";
 			context = "stats";
 			continue;
 		}
 		if (t === "stats:") {
-			flushCard();
+			flushCurrent();
 			context = "stats";
 			continue;
 		}
 		if (t === "graph:") {
-			flushCard();
+			flushCurrent();
 			context = "graph";
 			continue;
 		}
 		if (t === "divider:") {
-			flushCard();
-			flushSection();
-			flushDivider();
+			flushCurrent();
 			context = "divider";
 			currentDivider = { kind: "divider", title: "", type: undefined };
 			continue;
 		}
 		if (t === "section:") {
-			flushCard();
-			flushSection();
-			flushDivider();
+			flushCurrent();
 			context = "section";
 			currentSection = { kind: "section", columns: 2, cards: [] };
 			continue;
 		}
 		if (t === "cards:") {
 			context = "cards";
+			continue;
+		}
+
+		// ── New block types ──────────────────────────────
+		if (t === "links:") {
+			flushCurrent();
+			context = "links";
+			currentLinks = { kind: "links", items: [] };
+			continue;
+		}
+		if (t === "row:") {
+			flushCurrent();
+			// Pre-process: collect all indented children
+			const childLines = collectIndentedLines(lines, i + 1);
+			const childBlocks = parseChildBlocks(childLines);
+			currentRow = { kind: "row", children: childBlocks };
+			config.blocks.push(currentRow);
+			currentRow = null;
+			// Skip lines we consumed
+			i += childLines.length;
+			context = "root";
+			continue;
+		}
+		if (t === "tabs:") {
+			flushCurrent();
+			// Pre-process: collect all indented children
+			const childLines = collectIndentedLines(lines, i + 1);
+			const tabItems = parseTabItems(childLines);
+			currentTabs = { kind: "tabs", items: tabItems };
+			config.blocks.push(currentTabs);
+			currentTabs = null;
+			i += childLines.length;
+			context = "root";
+			continue;
+		}
+		if (t === "search:") {
+			flushCurrent();
+			context = "search";
+			currentSearch = { show: true };
+			continue;
+		}
+		if (t === "recently:" && !isRootRecentlyContext(lines, i)) {
+			flushCurrent();
+			context = "recently";
+			currentRecently = { kind: "recently", show: true };
 			continue;
 		}
 
@@ -93,7 +150,11 @@ export function parseDashboard(raw: string): DashboardConfig {
 
 		// Root-level keys recognized in ANY context
 		if (kv.key === "recently") {
-			config.recently = kv.value === "true";
+			if (kv.value === "true") {
+				config.recently = true;
+			} else if (kv.value === "false" || kv.value === "") {
+				config.recently = false;
+			}
 			continue;
 		}
 
@@ -139,15 +200,31 @@ export function parseDashboard(raw: string): DashboardConfig {
 					config.graph.enabled = kv.value === "true";
 				}
 				break;
+			case "links":
+				if (currentLinks) applyLinksKV(currentLinks, kv);
+				break;
+			case "search":
+				if (currentSearch) applySearchKV(currentSearch, kv);
+				break;
+			case "recently":
+				if (currentRecently) applyRecentlyKV(currentRecently, kv);
+				break;
 		}
 	}
 
-	// Flush trailing card, section, divider
-	flushCard();
-	flushSection();
-	flushDivider();
+	// Flush trailing block
+	flushCurrent();
 
 	return config;
+
+	function flushCurrent() {
+		flushCard();
+		flushSection();
+		flushDivider();
+		flushLinks();
+		flushSearch();
+		flushRecently();
+	}
 
 	function flushCard() {
 		if (currentSection && currentCard) {
@@ -174,7 +251,172 @@ export function parseDashboard(raw: string): DashboardConfig {
 			currentDivider = null;
 		}
 	}
+
+	function flushLinks() {
+		if (currentLinks) {
+			config.blocks.push(currentLinks);
+			currentLinks = null;
+		}
+	}
+
+	function flushSearch() {
+		if (currentSearch) {
+			config.search = currentSearch;
+			currentSearch = null;
+		}
+	}
+
+	function flushRecently() {
+		if (currentRecently) {
+			config.blocks.push(currentRecently);
+			currentRecently = null;
+		}
+	}
 }
+
+// ── Indent-based child extraction ────────────────────────
+
+/** Collect lines that are indented more than the starting position */
+function collectIndentedLines(allLines: string[], startIdx: number): string[] {
+	const collected: string[] = [];
+	if (startIdx >= allLines.length) return collected;
+
+	// Determine base indent from first non-empty line
+	let baseIndent = -1;
+	for (let j = startIdx; j < allLines.length; j++) {
+		const raw = allLines[j].replace(/\r$/, "");
+		if (raw.trim() === "" || raw.trim().startsWith("#")) continue;
+		baseIndent = raw.search(/\S/);
+		break;
+	}
+	if (baseIndent === -1) return collected;
+
+	for (let j = startIdx; j < allLines.length; j++) {
+		const raw = allLines[j].replace(/\r$/, "");
+		const trimmedLine = raw.trim();
+		if (trimmedLine === "" || trimmedLine.startsWith("#")) {
+			collected.push(raw);
+			continue;
+		}
+		const indent = raw.search(/\S/);
+		if (indent > baseIndent) {
+			collected.push(raw);
+		} else {
+			break;
+		}
+	}
+	return collected;
+}
+
+/** Parse collected indented lines as child blocks for Row */
+function parseChildBlocks(childLines: string[]): DashboardBlock[] {
+	const blocks: DashboardBlock[] = [];
+	if (childLines.length === 0) return blocks;
+
+	// Determine the base indent level
+	let baseIndent = -1;
+	for (const raw of childLines) {
+		const t = raw.trim();
+		if (t === "" || t.startsWith("#")) continue;
+		baseIndent = raw.search(/\S/);
+		break;
+	}
+	if (baseIndent === -1) return blocks;
+
+	// Strip base indent and rejoin as a string for parseDashboard
+	const stripped = childLines.map((line) => {
+		if (line.trim() === "") return "";
+		return line.slice(baseIndent);
+	}).join("\n");
+
+	const childConfig = parseDashboard(stripped);
+	return childConfig.blocks;
+}
+
+/** Parse collected indented lines as tab items for Tabs */
+function parseTabItems(childLines: string[]): TabItem[] {
+	const items: TabItem[] = [];
+	if (childLines.length === 0) return items;
+
+	// Determine base indent
+	let baseIndent = -1;
+	for (const raw of childLines) {
+		const t = raw.trim();
+		if (t === "" || t.startsWith("#")) continue;
+		baseIndent = raw.search(/\S/);
+		break;
+	}
+	if (baseIndent === -1) return items;
+
+	// Split into tab entries: each "- label:" starts a new tab
+	let currentTabLabel = "";
+	let currentTabLines: string[] = [];
+	let tabIndent = -1;
+
+	for (const raw of childLines) {
+		const t = raw.trim();
+		if (t === "" || t.startsWith("#")) {
+			if (currentTabLabel) currentTabLines.push(raw);
+			continue;
+		}
+		const indent = raw.search(/\S/);
+
+		// Check if this is a tab entry (- label: ...)
+		if (t.startsWith("- label:") || t.startsWith("- label :")) {
+			// Save previous tab
+			if (currentTabLabel) {
+				const tabBlocks = parseChildBlocks(currentTabLines);
+				items.push({
+					id: `tab-${items.length}`,
+					label: currentTabLabel,
+					blocks: tabBlocks,
+				});
+			}
+			currentTabLabel = parseValue(t, t.startsWith("- label:") ? "- label:" : "- label :");
+			currentTabLines = [];
+			tabIndent = indent;
+		} else if (currentTabLabel && indent > tabIndent) {
+			currentTabLines.push(raw);
+		} else if (currentTabLabel && indent <= tabIndent) {
+			// End of current tab's content
+			const tabBlocks = parseChildBlocks(currentTabLines);
+			items.push({
+				id: `tab-${items.length}`,
+				label: currentTabLabel,
+				blocks: tabBlocks,
+			});
+			currentTabLabel = "";
+			currentTabLines = [];
+		}
+	}
+
+	// Flush last tab
+	if (currentTabLabel) {
+		const tabBlocks = parseChildBlocks(currentTabLines);
+		items.push({
+			id: `tab-${items.length}`,
+			label: currentTabLabel,
+			blocks: tabBlocks,
+		});
+	}
+
+	return items;
+}
+
+/** Determine if `recently:` at this line is the root-level boolean form */
+function isRootRecentlyContext(allLines: string[], currentIdx: number): boolean {
+	// Check if the next non-empty line is indented (block form) or not (boolean form)
+	for (let j = currentIdx + 1; j < allLines.length; j++) {
+		const t = allLines[j].replace(/\r$/, "").trim();
+		if (t === "" || t.startsWith("#")) continue;
+		// If next line is indented, it's the block form
+		const indent = allLines[j].search(/\S/);
+		return indent <= 0;
+	}
+	return true;
+}
+
+// ── KV apply helpers ─────────────────────────────────────
 
 function applyKV(target: Record<string, any>, kv: { key: string; value: string }) {
 	target[kv.key] = kv.value;
@@ -186,7 +428,7 @@ function applyDividerKV(divider: DividerBlockConfig, kv: { key: string; value: s
 }
 
 function applySectionKV(section: SectionConfig, kv: { key: string; value: string }) {
-	if (kv.key === "columns") {
+	if (kv.key === "columns" || kv.key === "grid") {
 		const n = parseInt(kv.value, 10);
 		section.columns = (Number.isFinite(n) && n >= 1 && n <= 4 ? n : 2) as 1 | 2 | 3 | 4;
 	}
@@ -197,9 +439,36 @@ function applyCardKV(card: Partial<CardConfig>, kv: { key: string; value: string
 	if (kv.key === "desc") card.desc = kv.value;
 	if (kv.key === "path") card.path = ensureExt(kv.value);
 	if (kv.key === "icon") card.icon = kv.value;
-	if (kv.key === "color") card.color = kv.value;
 	if (kv.key === "type") card.type = kv.value === "mini" ? "mini" : "big";
 }
+
+function applyLinksKV(links: LinksConfig, kv: { key: string; value: string }) {
+	if (kv.key === "title") links.title = kv.value;
+	if (kv.key === "columns") {
+		const n = parseInt(kv.value, 10);
+		links.columns = (Number.isFinite(n) && n >= 1 && n <= 4 ? n : 3) as 1 | 2 | 3 | 4;
+	}
+}
+
+function applySearchKV(search: SearchConfig, kv: { key: string; value: string }) {
+	if (kv.key === "show") search.show = kv.value === "true";
+	if (kv.key === "default") search.default = kv.value as "vault" | "cards";
+	if (kv.key === "placeholder") search.placeholder = kv.value;
+}
+
+function applyRecentlyKV(recently: RecentlyConfig, kv: { key: string; value: string }) {
+	if (kv.key === "show") recently.show = kv.value === "true";
+	if (kv.key === "count") {
+		const n = parseInt(kv.value, 10);
+		recently.count = Number.isFinite(n) && n > 0 ? n : undefined;
+	}
+	if (kv.key === "path") recently.path = kv.value;
+	if (kv.key === "tags") {
+		recently.tags = kv.value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+	}
+}
+
+// ── Utility ──────────────────────────────────────────────
 
 function splitKV(line: string): { key: string; value: string } | null {
 	const idx = line.indexOf(":");

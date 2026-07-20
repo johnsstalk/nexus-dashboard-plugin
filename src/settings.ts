@@ -10,7 +10,12 @@ export interface MocEntry {
 	title: string;
 	desc: string;
 	icon: string;
-	color?: string;
+}
+
+export interface QuickLinkEntry {
+	label: string;
+	url: string;
+	icon: string;
 }
 
 export interface StatEntry {
@@ -46,6 +51,12 @@ export interface NexusSettings {
 	asciiDefaultSize: number;
 	asciiMobileSize: number;
 	asciiDefaultAlign: "left" | "center" | "right";
+	showSearch: boolean;
+	searchDefault: "vault" | "cards";
+	recentPath: string;
+	recentTags: string;
+	quickLinks: QuickLinkEntry[];
+	rowSizes: Record<string, string>;
 }
 
 export const DEFAULT_MOCS: MocEntry[] = [
@@ -93,6 +104,12 @@ export const DEFAULT_SETTINGS: NexusSettings = {
 	asciiDefaultSize: 1.0,
 	asciiMobileSize: 0.5,
 	asciiDefaultAlign: "center",
+	showSearch: false,
+	searchDefault: "vault",
+	recentPath: "",
+	recentTags: "",
+	quickLinks: [],
+	rowSizes: {},
 };
 
 function deepCloneDefaults(): NexusSettings {
@@ -101,6 +118,8 @@ function deepCloneDefaults(): NexusSettings {
 		mocs: DEFAULT_MOCS.map((m) => ({ ...m })),
 		stats: DEFAULT_STATS.map((s) => ({ ...s })),
 		dividerDesign: { ...DEFAULT_SETTINGS.dividerDesign },
+		quickLinks: DEFAULT_SETTINGS.quickLinks.map((l) => ({ ...l })),
+		rowSizes: { ...DEFAULT_SETTINGS.rowSizes },
 	};
 }
 
@@ -257,6 +276,18 @@ export class NexusSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.openOnStartup)
 					.onChange(async (value) => {
 						this.plugin.settings.openOnStartup = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Show search bar")
+			.setDesc("Show a vault-wide search bar on the dashboard")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.showSearch)
+					.onChange(async (value) => {
+						this.plugin.settings.showSearch = value;
 						await this.plugin.saveSettings();
 					})
 			);
@@ -513,6 +544,61 @@ export class NexusSettingTab extends PluginSettingTab {
 							.map((s) => s.trim())
 							.filter((s) => s.length > 0);
 						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Path filter")
+			.setDesc("Comma-separated folder paths to include (e.g. Journal, Project). Leave empty for all.")
+			.addText((text) =>
+				text
+					.setPlaceholder("Journal, Project")
+					.setValue(this.plugin.settings.recentPath || "")
+					.onChange(async (value) => {
+						this.plugin.settings.recentPath = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Tag filter")
+			.setDesc("Comma-separated tags to include (e.g. draft, wip). Leave empty for all.")
+			.addText((text) =>
+				text
+					.setPlaceholder("draft, wip")
+					.setValue(this.plugin.settings.recentTags || "")
+					.onChange(async (value) => {
+						this.plugin.settings.recentTags = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		// ── Quick Links section ─────────────────────────────
+		new Setting(containerEl).setHeading().setName("Quick Links");
+		containerEl.createEl("p", {
+			text: "Configure the quick links shown on the dashboard (empty code block only).",
+			cls: "setting-item-description",
+		});
+
+		this.plugin.settings.quickLinks.forEach((link, i) => {
+			this.renderQuickLink(containerEl, link, i);
+		});
+
+		new Setting(containerEl)
+			.setName("Add link")
+			.setDesc("Add a new quick link to the dashboard.")
+			.addButton((btn) =>
+				btn
+					.setButtonText("+ Add Link")
+					.setCta()
+					.onClick(async () => {
+						this.plugin.settings.quickLinks.push({
+							label: "New Link",
+							url: "https://example.com",
+							icon: "Link",
+						});
+						await this.plugin.saveSettings();
+						this.display();
 					})
 			);
 
@@ -870,19 +956,6 @@ export class NexusSettingTab extends PluginSettingTab {
 				iconInput.blur();
 			}
 		});
-
-		new Setting(containerEl)
-			.setName("Accent color")
-			.setDesc("Left border accent color (CSS color value)")
-			.addText((text) =>
-				text
-					.setPlaceholder("#8A5CF6")
-					.setValue(moc.color || "")
-					.onChange(async (value) => {
-						this.plugin.settings.mocs[index].color = value || undefined;
-						await this.plugin.saveSettings();
-					})
-			);
 	}
 
 	// ── ASCII Preview ──────────────────────────────────────────
@@ -965,5 +1038,41 @@ export class NexusSettingTab extends PluginSettingTab {
 		const lineRight = row.createDiv({ cls: "nexus-settings-divider-preview-line" });
 		lineRight.style.background = d.gradient;
 		lineRight.style.height = d.lineWidth;
+	}
+
+	// ── Quick Link ─────────────────────────────────────────
+
+	renderQuickLink(containerEl: HTMLElement, link: QuickLinkEntry, index: number): void {
+		const setting = new Setting(containerEl);
+
+		setting.setName(link.label || "Untitled");
+		setting.addText((text) =>
+			text
+				.setPlaceholder("Label")
+				.setValue(link.label)
+				.onChange(async (value) => {
+					this.plugin.settings.quickLinks[index].label = value;
+					await this.plugin.saveSettings();
+				})
+		);
+		setting.addText((text) =>
+			text
+				.setPlaceholder("URL")
+				.setValue(link.url)
+				.onChange(async (value) => {
+					this.plugin.settings.quickLinks[index].url = value;
+					await this.plugin.saveSettings();
+				})
+		);
+		setting.addExtraButton((btn) =>
+			btn
+				.setIcon("trash")
+				.setTooltip("Remove")
+				.onClick(async () => {
+					this.plugin.settings.quickLinks.splice(index, 1);
+					await this.plugin.saveSettings();
+					this.display();
+				})
+		);
 	}
 }

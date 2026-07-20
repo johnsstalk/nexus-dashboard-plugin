@@ -4,7 +4,19 @@ import { NexusSettings, DIVIDER_PRESETS } from "./settings";
 import { SMALL_ICONS, ICONS, DEFAULT_ICON } from "./icons";
 import { renderFiglet, getFontByName } from "./figlet";
 import { parseDashboard, buildDefaultConfig } from "./parser";
-import { DashboardConfig, DividerBlockConfig, HeaderConfig, SectionConfig, CardConfig } from "./types";
+import {
+	DashboardConfig,
+	DashboardBlock,
+	DividerBlockConfig,
+	HeaderConfig,
+	SectionConfig,
+	CardConfig,
+	LinksConfig,
+	RowConfig,
+	TabsConfig,
+	RecentlyConfig,
+	SearchConfig,
+} from "./types";
 
 export class NexusRenderer extends MarkdownRenderChild {
 	private plugin: NexusDashboardPlugin;
@@ -71,18 +83,27 @@ export class NexusRenderer extends MarkdownRenderChild {
 			this.renderStatsBar(containerEl, config.stats);
 		}
 
-		// ── Blocks (dividers + sections in order) ─────────
-		for (const block of config.blocks) {
-			if (block.kind === "divider") {
-				this.renderStandaloneDivider(containerEl, block);
-			} else {
-				this.renderSection(containerEl, block);
-			}
+		// ── Search bar ────────────────────────────────────
+		if (config.search?.show) {
+			this.renderSearchBar(containerEl, config.search);
 		}
 
-		// ── Recently modified ─────────────────────────────
-		if (config.recently) {
-			await this.renderRecentlyModified(containerEl);
+		// ── Blocks (unified dispatch) ─────────────────────
+		for (const block of config.blocks) {
+			await this.renderBlock(containerEl, block, config);
+		}
+
+		// ── Recently modified (root-level boolean) ────────
+		if (config.recently === true) {
+			const recentConfig: RecentlyConfig = {
+				kind: "recently",
+				show: true,
+				path: this.plugin.settings.recentPath || undefined,
+				tags: this.plugin.settings.recentTags
+					? this.plugin.settings.recentTags.split(",").map((s) => s.trim()).filter((s) => s.length > 0)
+					: undefined,
+			};
+			await this.renderRecentlyModified(containerEl, recentConfig);
 		}
 
 		// ── Graph links ───────────────────────────────────
@@ -91,43 +112,82 @@ export class NexusRenderer extends MarkdownRenderChild {
 		}
 	}
 
+	// ── Unified block dispatch ───────────────────────────────
+
+	private async renderBlock(containerEl: HTMLElement, block: DashboardBlock, config: DashboardConfig): Promise<void> {
+		switch (block.kind) {
+			case "divider":
+				this.renderStandaloneDivider(containerEl, block);
+				break;
+			case "section":
+				this.renderSection(containerEl, block);
+				break;
+			case "links":
+				this.renderLinks(containerEl, block);
+				break;
+			case "row":
+				this.renderRow(containerEl, block, config);
+				break;
+			case "tabs":
+				this.renderTabs(containerEl, block, config);
+				break;
+			case "recently":
+				await this.renderRecentlyModified(containerEl, block);
+				break;
+		}
+	}
+
 	// ── Config merge ───────────────────────────────────────────
 
 	private mergeConfigs(base: DashboardConfig, override: DashboardConfig, source: string): DashboardConfig {
 		const merged: DashboardConfig = { ...base };
 
-		// In populated code blocks, default header to false unless explicitly written
-		// Filter out empty values so settings defaults survive the merge
+		// Header
 		if (source.includes("header:")) {
 			const entries = Object.entries(override.header).filter(([_, v]) => v);
 			merged.header = { ...base.header, ...Object.fromEntries(entries), enabled: true };
 		} else {
 			merged.header = { ...base.header, enabled: false };
 		}
-		// In populated code blocks, default stats to false unless explicitly written
-		// Only merge the enabled flag — preserve items from settings (code block syntax has no stat-item syntax)
+
+		// Stats
 		if (source.includes("stats:")) {
 			merged.stats = { ...base.stats, enabled: override.stats.enabled };
 		} else {
 			merged.stats = { ...base.stats, enabled: false };
 		}
-		// In populated code blocks, default blocks to empty unless explicitly written
-		if (source.includes("section:") || source.includes("divider:")) {
+
+		// Blocks — detect ALL block types
+		const hasBlocks = source.includes("section:") ||
+			source.includes("divider:") ||
+			source.includes("links:") ||
+			source.includes("row:") ||
+			source.includes("tabs:");
+		if (hasBlocks) {
 			merged.blocks = override.blocks;
 		} else {
 			merged.blocks = [];
 		}
-		// In populated code blocks, default recently to false unless explicitly written
+
+		// Recently
 		if (source.includes("recently:")) {
 			merged.recently = override.recently;
 		} else {
 			merged.recently = false;
 		}
-		// In populated code blocks, default graph to false unless explicitly written
+
+		// Graph
 		if (source.includes("graph:")) {
 			merged.graph = { ...base.graph, ...override.graph };
 		} else {
 			merged.graph = { ...base.graph, enabled: false };
+		}
+
+		// Search
+		if (source.includes("search:")) {
+			merged.search = override.search;
+		} else {
+			merged.search = undefined;
 		}
 
 		return merged;
@@ -167,10 +227,29 @@ export class NexusRenderer extends MarkdownRenderChild {
 					desc: moc.desc,
 					path: moc.path,
 					icon: moc.icon,
-					color: moc.color,
 				})),
 			};
 			config.blocks.push(section);
+		}
+
+		// Quick Links from settings
+		if (opts.quickLinks && opts.quickLinks.length > 0) {
+			const linksBlock: LinksConfig = {
+				kind: "links",
+				title: "Quick Links",
+				columns: 3,
+				items: opts.quickLinks.map((link) => ({
+					url: link.url,
+					label: link.label,
+					icon: link.icon,
+				})),
+			};
+			config.blocks.push(linksBlock);
+		}
+
+		// Search
+		if (opts.showSearch) {
+			config.search = { show: true, default: opts.searchDefault || "vault" };
 		}
 
 		config.recently = opts.showRecently;
@@ -244,6 +323,317 @@ export class NexusRenderer extends MarkdownRenderChild {
 		}
 	}
 
+	// ── Render: Links ─────────────────────────────────────────
+
+	private renderLinks(containerEl: HTMLElement, links: LinksConfig): void {
+		if (links.items.length === 0) return;
+
+		const wrapper = containerEl.createDiv({ cls: "nexus-links" });
+
+		if (links.title) {
+			this.renderDivider(wrapper, links.title);
+		}
+
+		const cols = links.columns || 3;
+		const gridEl = wrapper.createDiv({ cls: `nexus-links-grid nexus-links-grid--cols-${cols}` });
+
+		for (const item of links.items) {
+			const itemEl = gridEl.createEl("a", { cls: "nexus-link-item" });
+			itemEl.href = item.url;
+			itemEl.target = "_blank";
+			itemEl.rel = "noopener";
+
+			// Icon
+			const iconName = item.icon || "Link";
+			const svg = SMALL_ICONS[iconName] || SMALL_ICONS["Link"] || DEFAULT_ICON;
+			const iconEl = itemEl.createDiv({ cls: "nexus-link-icon" });
+			iconEl.innerHTML = svg;
+
+			// Label
+			const label = item.label || new URL(item.url).hostname || item.url;
+			itemEl.createEl("span", { text: label, cls: "nexus-link-label" });
+
+			// Optional description
+			if (item.desc) {
+				itemEl.createEl("span", { text: item.desc, cls: "nexus-link-desc" });
+			}
+		}
+	}
+
+	// ── Render: Row ───────────────────────────────────────────
+
+	private renderRow(containerEl: HTMLElement, row: RowConfig, config: DashboardConfig): void {
+		if (row.children.length === 0) return;
+
+		const cols = row.columns || row.children.length || 2;
+		const proportion = row.proportion || this.getRowProportion(row);
+
+		const rowEl = containerEl.createDiv({ cls: "nexus-row" });
+		rowEl.style.setProperty("--nexus-row-cols", String(cols));
+		rowEl.style.setProperty("--nexus-row-proportion", proportion);
+
+		const children = row.children;
+		const colWidths = this.parseProportion(proportion, cols);
+
+		for (let i = 0; i < children.length && i < cols; i++) {
+			const colEl = rowEl.createDiv({ cls: "nexus-row-col" });
+			colEl.style.setProperty("--nexus-row-width", colWidths[i] || `${100 / cols}%`);
+
+			// Render child block(s) into this column
+			const child = children[i];
+			if (child.kind === "section" || child.kind === "divider" || child.kind === "links" || child.kind === "recently") {
+				this.renderBlock(colEl, child, config);
+			} else if (child.kind === "row" || child.kind === "tabs") {
+				this.renderBlock(colEl, child, config);
+			}
+
+			// Add draggable divider between columns (not after last)
+			if (i < children.length - 1 && i < cols - 1) {
+				const dividerEl = rowEl.createDiv({ cls: "nexus-row-divider" });
+				this.setupColumnDrag(dividerEl, rowEl, colWidths, i);
+			}
+		}
+	}
+
+	// ── Render: Tabs ──────────────────────────────────────────
+
+	private renderTabs(containerEl: HTMLElement, tabs: TabsConfig, config: DashboardConfig): void {
+		if (tabs.items.length === 0) return;
+
+		const wrapper = containerEl.createDiv({ cls: "nexus-tabs" });
+		const activeIdx = tabs.active ?? 0;
+
+		// Tab bar
+		const tabBar = wrapper.createDiv({ cls: "nexus-tabs-bar" });
+		const panels: HTMLElement[] = [];
+
+		for (let i = 0; i < tabs.items.length; i++) {
+			const tab = tabs.items[i];
+			const tabBtn = tabBar.createEl("button", {
+				cls: `nexus-tab ${i === activeIdx ? "active" : ""}`,
+				text: tab.label,
+			});
+
+			const panel = wrapper.createDiv({ cls: `nexus-tab-panel ${i === activeIdx ? "active" : ""}` });
+			panels.push(panel);
+
+			tabBtn.addEventListener("click", () => {
+				// Deactivate all
+				tabBar.querySelectorAll(".nexus-tab").forEach((el) => el.removeClass("active"));
+				panels.forEach((p) => p.removeClass("active"));
+				// Activate clicked
+				tabBtn.addClass("active");
+				panel.addClass("active");
+			});
+
+			// Render tab content
+			for (const block of tab.blocks) {
+				this.renderBlock(panel, block, config);
+			}
+		}
+	}
+
+	// ── Render: Search Bar ────────────────────────────────────
+
+	private renderSearchBar(containerEl: HTMLElement, search: SearchConfig): void {
+		const wrapper = containerEl.createDiv({ cls: "nexus-search" });
+		const input = wrapper.createEl("input", {
+			cls: "nexus-search-input",
+			attr: {
+				type: "text",
+				placeholder: search.placeholder || "Search notes...",
+			},
+		});
+
+		const resultsEl = wrapper.createDiv({ cls: "nexus-search-results" });
+		resultsEl.style.display = "none";
+
+		let debounceTimer: ReturnType<typeof setTimeout>;
+
+		input.addEventListener("input", () => {
+			clearTimeout(debounceTimer);
+			debounceTimer = setTimeout(() => {
+				const query = input.value.trim().toLowerCase();
+				if (query.length < 2) {
+					resultsEl.style.display = "none";
+					resultsEl.empty();
+					return;
+				}
+
+				const files = this.plugin.app.vault.getMarkdownFiles();
+				const matches = files
+					.filter((f) => f.basename.toLowerCase().includes(query) || f.path.toLowerCase().includes(query))
+					.slice(0, 10);
+
+				resultsEl.empty();
+				if (matches.length === 0) {
+					resultsEl.style.display = "none";
+					return;
+				}
+
+				resultsEl.style.display = "block";
+				for (const file of matches) {
+					const resultEl = resultsEl.createDiv({ cls: "nexus-search-result" });
+					const nameEl = resultEl.createEl("span", { text: file.basename, cls: "nexus-search-result-name" });
+					const pathEl = resultEl.createEl("span", { text: file.path, cls: "nexus-search-result-path" });
+
+					const openFile = () => {
+						this.plugin.app.workspace.openLinkText(file.path, "", false);
+						input.value = "";
+						resultsEl.style.display = "none";
+						resultsEl.empty();
+					};
+
+					resultEl.addEventListener("click", openFile);
+					nameEl.addEventListener("click", openFile);
+					pathEl.addEventListener("click", openFile);
+				}
+			}, 200);
+		});
+
+		// Close on escape or outside click
+		input.addEventListener("keydown", (e) => {
+			if (e.key === "Escape") {
+				input.value = "";
+				resultsEl.style.display = "none";
+				resultsEl.empty();
+				input.blur();
+			}
+		});
+
+		document.addEventListener("click", (e) => {
+			if (!wrapper.contains(e.target as Node)) {
+				resultsEl.style.display = "none";
+				resultsEl.empty();
+			}
+		});
+	}
+
+	// ── Render: Recently Modified ──────────────────────────────
+
+	private async renderRecentlyModified(containerEl: HTMLElement, config: RecentlyConfig): Promise<void> {
+		const opts = this.plugin.settings;
+		const count = config.count ?? opts.recentCount ?? 9;
+		const exclude = opts.excludeFolders || [];
+
+		let files = this.plugin.app.vault.getMarkdownFiles();
+
+		// Path filter
+		if (config.path) {
+			const paths = config.path.split(",").map((p) => p.trim().toLowerCase()).filter((p) => p.length > 0);
+			files = files.filter((f) => {
+				const pathLower = f.path.toLowerCase();
+				return paths.some((p) => pathLower.startsWith(p + "/") || pathLower === p);
+			});
+		}
+
+		// Tag filter
+		if (config.tags && config.tags.length > 0) {
+			files = files.filter((f) => {
+				const cache = this.plugin.app.metadataCache.getFileCache(f);
+				const tags: string[] = [];
+				if (cache?.frontmatter?.tags) {
+					const fmTags = cache.frontmatter.tags;
+					if (Array.isArray(fmTags)) {
+						tags.push(...fmTags.map((t: string) => String(t).toLowerCase()));
+					} else {
+						tags.push(String(fmTags).toLowerCase());
+					}
+				}
+				if (cache?.frontmatter?.tag) {
+					tags.push(String(cache.frontmatter.tag).toLowerCase());
+				}
+				return config.tags!.some((t) => tags.includes(t.toLowerCase()));
+			});
+		}
+
+		// Exclude folders
+		files = files.filter((f) => {
+			const firstFolder = f.path.split("/")[0];
+			return !exclude.includes(firstFolder);
+		});
+
+		// Sort by mtime and limit
+		files = files.sort((a, b) => b.stat.mtime - a.stat.mtime).slice(0, count);
+
+		if (files.length === 0) return;
+
+		const wrapperEl = containerEl.createDiv({ cls: "nexus-section" });
+		this.renderDivider(wrapperEl, opts.dividerLabel || "Recently Modified");
+
+		const gridEl = wrapperEl.createDiv({
+			cls: `nexus-mini-grid`,
+		});
+		gridEl.style.setProperty("--nexus-mini-columns", String(opts.miniGridColumns));
+
+		for (const file of files) {
+			const parent = this.getParentFolder(file.path);
+			const card = gridEl.createEl("div", { cls: "nexus-card-mini" });
+			card.addEventListener("click", (e) => {
+				e.preventDefault();
+				this.plugin.app.workspace.openLinkText(file.path, "", false);
+			});
+			const icon = card.createEl("div", { cls: "nexus-card-mini-icon" });
+			icon.innerHTML = this.getFolderIcon(parent);
+			const accent = "var(--interactive-accent)";
+			icon.style.setProperty("--pill-color", accent);
+			icon.style.setProperty("--accent-override", accent);
+			icon.style.setProperty("--icon-color", accent);
+			const body = card.createEl("div", { cls: "nexus-card-mini-body" });
+			body.createEl("div", { text: file.basename, cls: "nexus-card-mini-title" });
+			if (parent) {
+				body.createEl("div", { text: parent, cls: "nexus-card-mini-desc" });
+			}
+		}
+	}
+
+	// ── Render: Graph Links ────────────────────────────────────
+
+	private renderGraphLinks(containerEl: HTMLElement, config: DashboardConfig): void {
+		const paths: string[] = [];
+		const exclude = config.graph.exclude;
+
+		this.collectCardPaths(config.blocks, paths, exclude);
+
+		if (paths.length === 0) return;
+
+		const wikilinks = paths.map((p) => `[[${p}]]`).join(" ");
+		const span = containerEl.createSpan({ cls: "nexus-graph-links" });
+		span.setText(wikilinks);
+		span.style.display = "none";
+	}
+
+	/** Recursively collect card paths from all block types */
+	private collectCardPaths(blocks: DashboardBlock[], paths: string[], exclude: string[]): void {
+		for (const block of blocks) {
+			if (block.kind === "section") {
+				for (const card of block.cards) {
+					if (!paths.includes(card.path) && !exclude.some((ex) => card.path.includes(ex))) {
+						paths.push(card.path);
+					}
+				}
+			} else if (block.kind === "row") {
+				this.collectCardPaths(block.children, paths, exclude);
+			} else if (block.kind === "tabs") {
+				for (const tab of block.items) {
+					this.collectCardPaths(tab.blocks, paths, exclude);
+				}
+			} else if (block.kind === "links") {
+				for (const item of block.items) {
+					if (item.url.startsWith("obsidian://")) {
+						const match = item.url.match(/file=([^&]+)/);
+						if (match) {
+							const path = decodeURIComponent(match[1]);
+							if (!paths.includes(path) && !exclude.some((ex) => path.includes(ex))) {
+								paths.push(path);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// ── Shared: Divider ──────────────────────────────────────
 
 	private renderDivider(containerEl: HTMLElement, label: string, type?: string): void {
@@ -263,7 +653,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 		lineRight.style.height = d.lineWidth;
 	}
 
-	// ── Render: Card (with context menu + color accent) ────────
+	// ── Shared: Card ─────────────────────────────────────────
 
 	private createCard(card: CardConfig): HTMLElement {
 		const isMini = card.type === "mini";
@@ -347,12 +737,6 @@ export class NexusRenderer extends MarkdownRenderChild {
 		const icon = cardEl.createDiv({ cls: iconCls });
 		icon.innerHTML = svg;
 
-		// Color accent
-		if (card.color) {
-			const colorVar = card.color.startsWith("#") ? card.color : `var(--color-${card.color})`;
-			icon.style.borderLeft = `3px solid ${colorVar}`;
-		}
-
 		// Body
 		const bodyCls = isMini ? "nexus-card-mini-body" : "nexus-card-body";
 		const titleCls = isMini ? "nexus-card-mini-title" : "nexus-card-title";
@@ -367,74 +751,92 @@ export class NexusRenderer extends MarkdownRenderChild {
 		return cardEl;
 	}
 
-	// ── Render: Recently Modified ──────────────────────────────
+	// ── Row: proportion helpers ────────────────────────────────
 
-	private async renderRecentlyModified(containerEl: HTMLElement): Promise<void> {
-		const opts = this.plugin.settings;
-		const count = opts.recentCount ?? 9;
-		const exclude = opts.excludeFolders || [];
-		const files = this.plugin.app.vault
-			.getMarkdownFiles()
-			.filter((f) => {
-				const firstFolder = f.path.split("/")[0];
-				return !exclude.includes(firstFolder);
-			})
-			.sort((a, b) => b.stat.mtime - a.stat.mtime)
-			.slice(0, count);
-
-		if (files.length === 0) return;
-
-		const wrapperEl = containerEl.createDiv({ cls: "nexus-section" });
-		this.renderDivider(wrapperEl, opts.dividerLabel || "Recently Modified");
-
-		const gridEl = wrapperEl.createDiv({
-			cls: `nexus-mini-grid`,
-		});
-		gridEl.style.setProperty("--nexus-mini-columns", String(opts.miniGridColumns));
-
-		for (const file of files) {
-			const parent = this.getParentFolder(file.path);
-			const card = gridEl.createEl("div", { cls: "nexus-card-mini" });
-			card.addEventListener("click", (e) => {
-				e.preventDefault();
-				this.plugin.app.workspace.openLinkText(file.path, "", false);
-			});
-			const icon = card.createEl("div", { cls: "nexus-card-mini-icon" });
-			icon.innerHTML = this.getFolderIcon(parent);
-			const accent = "var(--interactive-accent)";
-			icon.style.setProperty("--pill-color", accent);
-			icon.style.setProperty("--accent-override", accent);
-			icon.style.setProperty("--icon-color", accent);
-			const body = card.createEl("div", { cls: "nexus-card-mini-body" });
-			body.createEl("div", { text: file.basename, cls: "nexus-card-mini-title" });
-			if (parent) {
-				body.createEl("div", { text: parent, cls: "nexus-card-mini-desc" });
-			}
-		}
+	private getRowProportion(row: RowConfig): string {
+		const n = row.columns || row.children.length || 2;
+		const part = Math.floor(100 / n);
+		const parts = Array(n - 1).fill(part);
+		parts.push(100 - part * (n - 1));
+		return parts.join("/");
 	}
 
-	// ── Render: Graph Links ────────────────────────────────────
-
-	private renderGraphLinks(containerEl: HTMLElement, config: DashboardConfig): void {
-		const paths: string[] = [];
-		const exclude = config.graph.exclude;
-
-		for (const block of config.blocks) {
-			if (block.kind === "section") {
-				for (const card of block.cards) {
-					if (!paths.includes(card.path) && !exclude.some((ex) => card.path.includes(ex))) {
-						paths.push(card.path);
-					}
-				}
+	private parseProportion(proportion: string, cols: number): string[] {
+		const parts = proportion.split("/").map((s) => s.trim());
+		const widths: string[] = [];
+		for (let i = 0; i < cols; i++) {
+			const val = parseInt(parts[i] || "0", 10);
+			if (Number.isFinite(val) && val > 0) {
+				widths.push(`${val}%`);
+			} else {
+				widths.push(`${100 / cols}%`);
 			}
 		}
+		return widths;
+	}
 
-		if (paths.length === 0) return;
+	private getRowProportionKey(rowIndex: number): string {
+		return `${this.sourcePath}:${rowIndex}`;
+	}
 
-		const wikilinks = paths.map((p) => `[[${p}]]`).join(" ");
-		const span = containerEl.createSpan({ cls: "nexus-graph-links" });
-		span.setText(wikilinks);
-		span.style.display = "none";
+	// ── Row: column drag ──────────────────────────────────────
+
+	private setupColumnDrag(dividerEl: HTMLElement, rowEl: HTMLElement, colWidths: string[], dividerIdx: number): void {
+		const MIN_WIDTH = 20;
+		let isDragging = false;
+		let startX = 0;
+		let startLeftWidth = 0;
+
+		const cols = rowEl.querySelectorAll(".nexus-row-col");
+		const leftCol = cols[dividerIdx] as HTMLElement;
+		const rightCol = cols[dividerIdx + 1] as HTMLElement;
+		if (!leftCol || !rightCol) return;
+
+		const onMouseMove = (e: MouseEvent) => {
+			if (!isDragging) return;
+			const rowRect = rowEl.getBoundingClientRect();
+			const dx = e.clientX - startX;
+			const rowWidth = rowRect.width;
+
+			let leftPct = (startLeftWidth + dx) / rowWidth * 100;
+			leftPct = Math.max(MIN_WIDTH, Math.min(100 - MIN_WIDTH, leftPct));
+			const rightPct = 100 - leftPct;
+
+			leftCol.style.setProperty("--nexus-row-width", `${leftPct}%`);
+			rightCol.style.setProperty("--nexus-row-width", `${rightPct}%`);
+		};
+
+		const onMouseUp = () => {
+			if (!isDragging) return;
+			isDragging = false;
+			dividerEl.removeClass("dragging");
+			document.removeEventListener("mousemove", onMouseMove);
+			document.removeEventListener("mouseup", onMouseUp);
+
+			// Save proportion
+			const leftPct = parseFloat(leftCol.style.getPropertyValue("--nexus-row-width")) || 50;
+			const rightPct = parseFloat(rightCol.style.getPropertyValue("--nexus-row-width")) || 50;
+			const proportion = `${Math.round(leftPct)}/${Math.round(rightPct)}`;
+			this.saveRowProportion(proportion);
+		};
+
+		dividerEl.addEventListener("mousedown", (e) => {
+			isDragging = true;
+			startX = e.clientX;
+			startLeftWidth = leftCol.getBoundingClientRect().width;
+			dividerEl.addClass("dragging");
+			e.preventDefault();
+			document.addEventListener("mousemove", onMouseMove);
+			document.addEventListener("mouseup", onMouseUp);
+		});
+	}
+
+	private saveRowProportion(proportion: string): void {
+		const key = this.getRowProportionKey(0);
+		const settings = this.plugin.settings;
+		if (!settings.rowSizes) settings.rowSizes = {};
+		settings.rowSizes[key] = proportion;
+		this.plugin.saveSettings();
 	}
 
 	// ── Shared helpers ─────────────────────────────────────────

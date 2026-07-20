@@ -832,3 +832,350 @@
   color: var(--text-muted);
   font-size: 0.8rem;
 }
+
+/* ============================================================
+   Nexus Row Layout — Side-by-side columns
+   ============================================================ */
+
+.nexus-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  margin-bottom: 1.5rem;
+  min-height: 0;
+}
+
+.nexus-row-col {
+  flex: 0 0 auto;
+  width: var(--nexus-row-width, 50%);
+  min-width: 0;
+}
+
+.nexus-row-divider {
+  width: 4px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: var(--background-modifier-border);
+  border-radius: 2px;
+  margin: 0 2px;
+  transition: background 0.15s ease, transform 0.15s ease;
+  position: relative;
+}
+
+.nexus-row-divider::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -4px;
+  right: -4px;
+  bottom: 0;
+}
+
+.nexus-row-divider:hover,
+.nexus-row-divider.dragging {
+  background: var(--interactive-accent);
+  transform: scaleX(1.5);
+}
+
+/* ============================================================
+   Nexus Tabs — Tabbed content panels
+   ============================================================ */
+
+.nexus-tabs {
+  margin-bottom: 1.5rem;
+}
+
+.nexus-tabs-bar {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin-bottom: 12px;
+  padding: 0 4px;
+}
+
+.nexus-tab {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 16px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.15s ease, border-color 0.15s ease;
+  font-family: inherit;
+}
+
+.nexus-tab:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+  border-radius: 4px 4px 0 0;
+}
+
+.nexus-tab.active {
+  color: var(--interactive-accent);
+  border-bottom-color: var(--interactive-accent);
+}
+
+.nexus-tab-panel {
+  display: none;
+}
+
+.nexus-tab-panel.active {
+  display: block;
+}
+
+/* ============================================================
+   Nexus Links — Quick links grid
+   ============================================================ */
+
+.nexus-links {
+  margin-bottom: 1.5rem;
+}
+
+.nexus-links-grid {
+  display: grid;
+  gap: 8px;
+  margin-top: 0.5rem;
+}
+
+.nexus-links-grid--cols-1 {
+  grid-template-columns: 1fr;
+}
+
+.nexus-links-grid--cols-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.nexus-links-grid--cols-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.nexus-links-grid--cols-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.nexus-link-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  text-decoration: none !important;
+  color: var(--text-normal) !important;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.nexus-link-item:hover {
+  transform: translateY(-1px);
+  border-color: var(--interactive-accent);
+  background: var(--background-modifier-hover);
+}
+
+.nexus-link-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.nexus-link-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.nexus-link-item:hover .nexus-link-icon {
+  color: var(--interactive-accent);
+  border-color: var(--interactive-accent);
+}
+
+.nexus-link-label {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-normal);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nexus-link-desc {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ============================================================
+   Nexus Search — Vault quick navigation
+   ============================================================ */
+
+.nexus-search {
+  position: relative;
+  margin-bottom: 1.5rem;
+}
+
+.nexus-search-input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  font-size: 0.88rem;
+  font-family: inherit;
+  transition: border-color 0.15s ease;
+}
+
+.nexus-search-input:focus {
+  border-color: var(--interactive-accent);
+  outline: none;
+}
+
+.nexus-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.nexus-search-results {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  margin-top: 4px;
+}
+
+.nexus-search-result {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.nexus-search-result:last-child {
+  border-bottom: none;
+}
+
+.nexus-search-result:hover {
+  background: var(--background-modifier-hover);
+}
+
+.nexus-search-result-name {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-normal);
+}
+
+.nexus-search-result-path {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+/* ============================================================
+   Nexus Settings Tabs
+   ============================================================ */
+
+.nexus-settings-tabs {
+  display: flex;
+  border-bottom: 2px solid var(--background-modifier-border);
+  margin-bottom: 24px;
+  padding: 0 8px;
+  overflow-x: auto;
+}
+
+.nexus-settings-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: color 0.15s ease, border-color 0.15s ease;
+  background: none;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+  font-family: inherit;
+}
+
+.nexus-settings-tab:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.nexus-settings-tab.active {
+  color: var(--interactive-accent);
+  border-bottom-color: var(--interactive-accent);
+}
+
+.nexus-settings-tab svg {
+  width: 14px;
+  height: 14px;
+}
+
+.nexus-settings-content {
+  padding: 0 8px;
+}
+
+/* ============================================================
+   Mobile Responsive — New components
+   ============================================================ */
+
+@media (max-width: 600px) {
+  .nexus-row {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .nexus-row-col {
+    width: 100% !important;
+  }
+
+  .nexus-row-divider {
+    display: none;
+  }
+
+  .nexus-links-grid,
+  .nexus-links-grid--cols-1,
+  .nexus-links-grid--cols-2,
+  .nexus-links-grid--cols-3,
+  .nexus-links-grid--cols-4 {
+    grid-template-columns: 1fr;
+  }
+
+  .nexus-tabs-bar {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .nexus-settings-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}

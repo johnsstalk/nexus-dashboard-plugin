@@ -167,6 +167,12 @@ export default class NexusDashboardPlugin extends Plugin {
 			asciiDefaultSize: typeof data?.asciiDefaultSize === "number" ? data.asciiDefaultSize : DEFAULT_SETTINGS.asciiDefaultSize,
 			asciiMobileSize: typeof data?.asciiMobileSize === "number" ? data.asciiMobileSize : DEFAULT_SETTINGS.asciiMobileSize,
 			asciiDefaultAlign: typeof data?.asciiDefaultAlign === "string" ? data.asciiDefaultAlign : DEFAULT_SETTINGS.asciiDefaultAlign,
+			showSearch: typeof data?.showSearch === "boolean" ? data.showSearch : DEFAULT_SETTINGS.showSearch,
+			searchDefault: typeof data?.searchDefault === "string" ? data.searchDefault : DEFAULT_SETTINGS.searchDefault,
+			recentPath: typeof data?.recentPath === "string" ? data.recentPath : DEFAULT_SETTINGS.recentPath,
+			recentTags: typeof data?.recentTags === "string" ? data.recentTags : DEFAULT_SETTINGS.recentTags,
+			quickLinks: data?.quickLinks && Array.isArray(data.quickLinks) ? data.quickLinks.map((l: any) => ({ ...l })) : DEFAULT_SETTINGS.quickLinks.map((l) => ({ ...l })),
+			rowSizes: data?.rowSizes && typeof data.rowSizes === "object" ? { ...data.rowSizes } : {},
 		};
 	}
 
