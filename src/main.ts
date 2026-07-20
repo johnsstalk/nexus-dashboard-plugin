@@ -1,10 +1,19 @@
-import { Editor, MarkdownView, MarkdownFileInfo, Plugin, Notice, TFile, WorkspaceLeaf } from "obsidian";
+import { Editor, MarkdownView, MarkdownFileInfo, Plugin, Notice, TFile, TAbstractFile, WorkspaceLeaf } from "obsidian";
 import { NexusSettings, DEFAULT_SETTINGS, NexusSettingTab } from "./settings";
 import { NexusRenderer } from "./renderer";
-import { renderFiglet, getFontByName } from "./figlet";
+
 
 const DASHBOARD_VIEW_TYPE = "nexus-dashboard-view";
-const DASHBOARD_NOTE_PATH = "Nexus Dashboard.md";
+
+/** Check if a path already has a file extension */
+function hasExtension(path: string): boolean {
+	return /\.\w{1,10}$/.test(path);
+}
+
+/** Auto-append .md to extension-free paths */
+function ensureExtension(path: string): string {
+	return hasExtension(path) ? path : path + ".md";
+}
 
 export default class NexusDashboardPlugin extends Plugin {
 	settings: NexusSettings = DEFAULT_SETTINGS;
@@ -13,15 +22,22 @@ export default class NexusDashboardPlugin extends Plugin {
 	async onload() {
 		await this.loadSettings();
 
+		// ── Migration: append .md to extension-free MOC paths ──
+		let migrated = false;
+		for (const moc of this.settings.mocs) {
+			if (!hasExtension(moc.path)) {
+				moc.path = ensureExtension(moc.path);
+				migrated = true;
+			}
+		}
+		if (migrated) {
+			await this.saveSettings();
+		}
+
 		// ── Nexus Dashboard code block ──────────────────────
 		this.registerMarkdownCodeBlockProcessor("nexus-dashboard", (source, el, ctx) => {
 			const renderer = new NexusRenderer(el, this, source, ctx.sourcePath);
 			ctx.addChild(renderer);
-		});
-
-		// ── ASCII art code block ────────────────────────────
-		this.registerMarkdownCodeBlockProcessor("ascii", (source, el) => {
-			this.renderAsciiBlock(source, el);
 		});
 
 		// ── Ribbon icon ─────────────────────────────────────
@@ -49,9 +65,9 @@ export default class NexusDashboardPlugin extends Plugin {
 			name: "Insert ASCII art block",
 			editorCallback: (editor: Editor, _ctx: MarkdownView | MarkdownFileInfo) => {
 				const cursor = editor.getCursor();
-				const insert = "```ascii\n\n```\n";
+				const insert = "```nexus-dashboard\nheader:\n  text: \n```\n";
 				editor.replaceRange(insert, cursor);
-				editor.setCursor({ line: cursor.line + 1, ch: 0 });
+				editor.setCursor({ line: cursor.line + 3, ch: 8 });
 			},
 		});
 
@@ -61,12 +77,32 @@ export default class NexusDashboardPlugin extends Plugin {
 			editorCallback: (editor: Editor, _ctx: MarkdownView | MarkdownFileInfo) => {
 				const selection = editor.getSelection();
 				if (selection) {
-					editor.replaceSelection(` \`\`\`ascii\n${selection}\n\`\`\` `);
+					editor.replaceSelection(`\n\`\`\`nexus-dashboard\nheader:\n  text: ${selection}\n\`\`\`\n`);
 				}
 			},
 		});
 
 		this.addSettingTab(new NexusSettingTab(this.app, this));
+
+		// ── Update paths on file rename/move ───────────────
+		this.registerEvent(
+			this.app.vault.on("rename", (file: TAbstractFile, oldPath: string) => {
+				if (!(file instanceof TFile)) return;
+				// Paths now include extensions — compare full paths
+				const oldPathLower = oldPath.toLowerCase();
+				const newPath = file.path;
+
+				// Update settings MOCs
+				for (const moc of this.settings.mocs) {
+					if (moc.path.toLowerCase() === oldPathLower) moc.path = newPath;
+				}
+				this.saveData(this.settings);
+
+				// Update paths inside nexus-dashboard code blocks in all vault notes
+				// Pass original case for code block matching (case-sensitive includes)
+				this.updateCodeBlockPaths(oldPath, newPath);
+			})
+		);
 
 		// ── Open on startup ─────────────────────────────────
 		if (this.settings.openOnStartup) {
@@ -78,22 +114,32 @@ export default class NexusDashboardPlugin extends Plugin {
 
 	onunload() {}
 
-	// ── Dashboard opener ───────────────────────────────────
+	// ── Dashboard finder ───────────────────────────────────
+
+	private async findDashboardFile(): Promise<TFile | null> {
+		const files = this.app.vault.getMarkdownFiles();
+		for (const file of files) {
+			const content = await this.app.vault.cachedRead(file);
+			if (content.includes("```nexus-dashboard")) {
+				return file;
+			}
+		}
+		return null;
+	}
 
 	async openDashboard(): Promise<void> {
 		const { workspace } = this.app;
 
-		// Check if dashboard note already exists
-		const existingFile = this.app.vault.getAbstractFileByPath(DASHBOARD_NOTE_PATH);
+		// Find existing dashboard note by content
+		const existingFile = await this.findDashboardFile();
 
 		if (existingFile instanceof TFile) {
-			// Open existing dashboard note
-			await workspace.openLinkText(DASHBOARD_NOTE_PATH, "", false);
+			await workspace.openLinkText(existingFile.path, "", false);
 		} else {
 			// Create the dashboard note
 			const content = "```nexus-dashboard\n```\n";
-			await this.app.vault.create(DASHBOARD_NOTE_PATH, content);
-			await workspace.openLinkText(DASHBOARD_NOTE_PATH, "", false);
+			const file = await this.app.vault.create("Nexus Dashboard.md", content);
+			await workspace.openLinkText(file.path, "", false);
 			new Notice("Nexus Dashboard created");
 		}
 	}
@@ -119,6 +165,7 @@ export default class NexusDashboardPlugin extends Plugin {
 			asciiDefaultFont: typeof data?.asciiDefaultFont === "string" ? data.asciiDefaultFont : DEFAULT_SETTINGS.asciiDefaultFont,
 			asciiDefaultColor: typeof data?.asciiDefaultColor === "string" ? data.asciiDefaultColor : DEFAULT_SETTINGS.asciiDefaultColor,
 			asciiDefaultSize: typeof data?.asciiDefaultSize === "number" ? data.asciiDefaultSize : DEFAULT_SETTINGS.asciiDefaultSize,
+			asciiMobileSize: typeof data?.asciiMobileSize === "number" ? data.asciiMobileSize : DEFAULT_SETTINGS.asciiMobileSize,
 			asciiDefaultAlign: typeof data?.asciiDefaultAlign === "string" ? data.asciiDefaultAlign : DEFAULT_SETTINGS.asciiDefaultAlign,
 		};
 	}
@@ -136,60 +183,49 @@ export default class NexusDashboardPlugin extends Plugin {
 		}
 	}
 
-	// ── ASCII block renderer ───────────────────────────────
+	// ── Update paths inside code blocks on file rename ────
 
-	private renderAsciiBlock(source: string, containerEl: HTMLElement): void {
-		const lines = source.split("\n");
-		const params: Record<string, string> = {};
-		const textLines: string[] = [];
+	private async updateCodeBlockPaths(oldPath: string, newPath: string): Promise<void> {
+		// oldPath/newPath are full paths with extensions (e.g. "MOC/Journal MOC.md")
+		const ext = oldPath.match(/\.\w{1,10}$/)?.[0] || ".md";
+		const oldPathNoExt = oldPath.replace(new RegExp(ext.replace(".", "\\.") + "$"), "");
 
-		for (const line of lines) {
-			const trimmed = line.trim();
-			const match = trimmed.match(/^(\w+)\s*=\s*(.+)$/);
-			if (match && textLines.length === 0) {
-				params[match[1].toLowerCase()] = match[2].trim();
-			} else if (trimmed !== "") {
-				textLines.push(trimmed);
+		const mdFiles = this.app.vault.getMarkdownFiles();
+		for (const file of mdFiles) {
+			const content = await this.app.vault.cachedRead(file);
+			if (!content.includes("```nexus-dashboard")) continue;
+
+			// Match both old (no ext) and new (with ext) formats
+			const hasOldFormat = content.includes(oldPathNoExt) && !content.includes(oldPath);
+			const hasNewFormat = content.includes(oldPath);
+			if (!hasOldFormat && !hasNewFormat) continue;
+
+			let updated = content;
+
+			if (hasOldFormat) {
+				// Migrate: old extension-free → new with extension
+				updated = updated.replaceAll(oldPathNoExt, newPath);
+			} else {
+				// Already has extension — normal replace
+				updated = updated.replaceAll(oldPath, newPath);
+			}
+
+			// Also update label if it matches old basename
+			const oldBasename = oldPathNoExt.split("/").pop() || oldPathNoExt;
+			const newBasename = (newPath.replace(/\.\w{1,10}$/, "").split("/").pop() || "");
+			if (oldBasename !== newBasename) {
+				const escaped = oldBasename.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+				updated = updated.replace(
+					new RegExp(`(label:\\s*)${escaped}(\\.md)?(\\s*\n)`),
+					`$1${newBasename}$3`
+				);
+			}
+
+			if (updated !== content) {
+				await this.app.vault.modify(file, updated);
 			}
 		}
-
-		const text = textLines.join("\n").trim();
-		if (!text) {
-			const hint = containerEl.createDiv({
-				cls: "ascii-header-hint",
-				text: "Type text on the next line to render ASCII art",
-			});
-			hint.style.color = "var(--text-muted)";
-			hint.style.fontStyle = "italic";
-			hint.style.padding = "8px";
-			return;
-		}
-
-		const color = params.color ?? this.settings.asciiDefaultColor;
-		const parsedSize = params.size ? parseFloat(params.size) : NaN;
-		const size = Number.isFinite(parsedSize) ? parsedSize : this.settings.asciiDefaultSize;
-		const alignParam = params.align?.toLowerCase();
-		const align = (["left", "center", "right"].includes(alignParam) ? alignParam : this.settings.asciiDefaultAlign) as "left" | "center" | "right";
-		const fontName = params.font ?? this.settings.asciiDefaultFont;
-
-		const font = getFontByName(fontName);
-		const rendered = renderFiglet(text, { font });
-
-		const wrapper = containerEl.createDiv({ cls: "ascii-header-wrapper" });
-
-		const pre = wrapper.createEl("pre", {
-			text: rendered,
-			cls: "ascii-header-output",
-		});
-
-		pre.style.color = color;
-		pre.style.fontSize = `${size}em`;
-		pre.style.textAlign = align;
-		pre.style.lineHeight = "1";
-		pre.style.margin = "0";
-		pre.style.padding = "16px 0";
-		pre.style.overflowX = "auto";
-		pre.style.whiteSpace = "pre";
-		pre.style.fontFamily = "monospace";
+		this.rerenderDashboards();
 	}
+
 }

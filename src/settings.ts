@@ -1,8 +1,9 @@
-import { App, PluginSettingTab, Setting, Notice, setIcon } from "obsidian";
+import { App, PluginSettingTab, Setting, Notice, setIcon, Modal } from "obsidian";
 import type NexusDashboardPlugin from "./main";
 import { getAvailableFonts, renderFiglet } from "./figlet";
+import { ICONS, SMALL_ICONS } from "./icons";
 
-export const ICON_NAMES = ["Journal", "Knowledge", "Personal", "Project", "Resources", "Trackers", "MOC", "Media"];
+export const ICON_NAMES = Object.keys(ICONS);
 
 export interface MocEntry {
 	path: string;
@@ -43,16 +44,17 @@ export interface NexusSettings {
 	asciiDefaultFont: string;
 	asciiDefaultColor: string;
 	asciiDefaultSize: number;
+	asciiMobileSize: number;
 	asciiDefaultAlign: "left" | "center" | "right";
 }
 
 export const DEFAULT_MOCS: MocEntry[] = [
-	{ path: "MOC/Journal MOC", title: "Journal MOC", desc: "Personal reflections & daily logs", icon: "Journal" },
-	{ path: "MOC/Knowledge MOC", title: "Knowledge MOC", desc: "Learning notes & insights", icon: "Knowledge" },
-	{ path: "MOC/Personal MOC", title: "Personal MOC", desc: "Goals, habits & self-tracking", icon: "Personal" },
-	{ path: "MOC/Projects MOC", title: "Projects MOC", desc: "Active work & side quests", icon: "Project" },
-	{ path: "MOC/Resources MOC", title: "Resources MOC", desc: "Tools, references & bookmarks", icon: "Resources" },
-	{ path: "MOC/Tracker Index MOC", title: "Tracker Index MOC", desc: "Metrics, streaks & analytics", icon: "Trackers" },
+	{ path: "MOC/Journal MOC.md", title: "Journal MOC", desc: "Personal reflections & daily logs", icon: "Journal" },
+	{ path: "MOC/Knowledge MOC.md", title: "Knowledge MOC", desc: "Learning notes & insights", icon: "Knowledge" },
+	{ path: "MOC/Personal MOC.md", title: "Personal MOC", desc: "Goals, habits & self-tracking", icon: "Personal" },
+	{ path: "MOC/Projects MOC.md", title: "Projects MOC", desc: "Active work & side quests", icon: "Project" },
+	{ path: "MOC/Resources MOC.md", title: "Resources MOC", desc: "Tools, references & bookmarks", icon: "Resources" },
+	{ path: "MOC/Tracker Index MOC.md", title: "Tracker Index MOC", desc: "Metrics, streaks & analytics", icon: "Trackers" },
 ];
 
 export const DEFAULT_STATS: StatEntry[] = [
@@ -89,6 +91,7 @@ export const DEFAULT_SETTINGS: NexusSettings = {
 	asciiDefaultFont: "ANSI Shadow",
 	asciiDefaultColor: "#8A5CF6",
 	asciiDefaultSize: 1.0,
+	asciiMobileSize: 0.5,
 	asciiDefaultAlign: "center",
 };
 
@@ -185,6 +188,42 @@ function detectDividerPreset(d: DividerDesign): string {
 	return "default";
 }
 
+// ── Confirmation Modal ───────────────────────────────────────
+
+class ConfirmModal extends Modal {
+	private title: string;
+	private message: string;
+	private onConfirm: () => void;
+
+	constructor(app: App, title: string, message: string, onConfirm: () => void) {
+		super(app);
+		this.title = title;
+		this.message = message;
+		this.onConfirm = onConfirm;
+	}
+
+	onOpen(): void {
+		const { contentEl } = this;
+		contentEl.createEl("h3", { text: this.title });
+		contentEl.createEl("p", { text: this.message });
+
+		const btnRow = contentEl.createDiv({ cls: "modal-button-container" });
+
+		const cancelBtn = btnRow.createEl("button", { text: "Cancel" });
+		cancelBtn.addEventListener("click", () => this.close());
+
+		const confirmBtn = btnRow.createEl("button", { text: "Confirm", cls: "mod-warning" });
+		confirmBtn.addEventListener("click", () => {
+			this.onConfirm();
+			this.close();
+		});
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
+	}
+}
+
 // ── Settings Tab ───────────────────────────────────────────────
 
 export class NexusSettingTab extends PluginSettingTab {
@@ -276,7 +315,7 @@ export class NexusSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Default size")
-			.setDesc("Default font size multiplier (0.5 = half, 1.0 = normal, 2.0 = double)")
+			.setDesc("Desktop font size multiplier (0.3–3.0)")
 			.addSlider((slider) => {
 				slider
 					.setLimits(0.3, 3.0, 0.1)
@@ -284,6 +323,21 @@ export class NexusSettingTab extends PluginSettingTab {
 					.setDynamicTooltip()
 					.onChange(async (value) => {
 						this.plugin.settings.asciiDefaultSize = value;
+						await this.plugin.saveSettings();
+						this.updateAsciiPreview();
+					});
+			});
+
+		new Setting(containerEl)
+			.setName("Mobile size")
+			.setDesc("Mobile font size multiplier (0.3–2.0)")
+			.addSlider((slider) => {
+				slider
+					.setLimits(0.3, 2.0, 0.1)
+					.setValue(this.plugin.settings.asciiMobileSize)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						this.plugin.settings.asciiMobileSize = value;
 						await this.plugin.saveSettings();
 						this.updateAsciiPreview();
 					});
@@ -535,10 +589,17 @@ export class NexusSettingTab extends PluginSettingTab {
 				btn
 					.setButtonText("Reset all settings")
 					.setWarning()
-					.onClick(async () => {
-						this.plugin.settings = deepCloneDefaults();
-						await this.plugin.saveSettings();
-						this.display();
+					.onClick(() => {
+						new ConfirmModal(
+							this.app,
+							"Reset all settings?",
+							"This will restore all MOC cards, stats, and layout to the original defaults. This cannot be undone.",
+							async () => {
+								this.plugin.settings = deepCloneDefaults();
+								await this.plugin.saveSettings();
+								this.display();
+							}
+						).open();
 					})
 			);
 	}
@@ -661,9 +722,16 @@ export class NexusSettingTab extends PluginSettingTab {
 		setIcon(removeBtn, "trash");
 		removeBtn.addEventListener("click", async (e) => {
 			e.stopPropagation();
-			this.plugin.settings.mocs.splice(index, 1);
-			await this.plugin.saveSettings();
-			this.display();
+			new ConfirmModal(
+				this.app,
+				`Remove "${moc.title}"?`,
+				"This MOC card will be removed from the dashboard. You can add it back later.",
+				async () => {
+					this.plugin.settings.mocs.splice(index, 1);
+					await this.plugin.saveSettings();
+					this.display();
+				}
+			).open();
 		});
 
 		// Toggle collapse
@@ -726,19 +794,82 @@ export class NexusSettingTab extends PluginSettingTab {
 					})
 			);
 
-		new Setting(containerEl)
+		// ── Icon picker (searchable with live preview) ──────
+		const iconSetting = new Setting(containerEl)
 			.setName("Icon")
-			.setDesc("Choose the card icon")
-			.addDropdown((dropdown) => {
-				for (const name of ICON_NAMES) {
-					dropdown.addOption(name, name);
-				}
-				dropdown.setValue(ICON_NAMES.includes(moc.icon) ? moc.icon : "MOC");
-				dropdown.onChange(async (value) => {
-					this.plugin.settings.mocs[index].icon = value;
+			.setDesc("Type to search, click to select");
+
+		const iconWrapper = iconSetting.settingEl.createDiv({ cls: "nexus-icon-picker-wrapper" });
+
+		// Current icon preview + input row
+		const iconRow = iconWrapper.createDiv({ cls: "nexus-icon-picker-row" });
+
+		const iconPreview = iconRow.createDiv({ cls: "nexus-icon-picker-preview" });
+		iconPreview.innerHTML = SMALL_ICONS[moc.icon] || SMALL_ICONS["MOC"] || "";
+
+		const iconInput = iconRow.createEl("input", {
+			cls: "nexus-icon-picker-input",
+			attr: { type: "text", placeholder: "Search icons..." },
+		});
+		iconInput.value = moc.icon;
+
+		// Icon grid (hidden by default, shown on focus)
+		const iconGrid = iconWrapper.createDiv({ cls: "nexus-icon-picker-grid" });
+
+		const renderIconGrid = (filter: string) => {
+			iconGrid.empty();
+			const lower = filter.toLowerCase();
+			const matches = ICON_NAMES.filter((name) => name.toLowerCase().includes(lower));
+
+			for (const name of matches) {
+				const btn = iconGrid.createDiv({ cls: "nexus-icon-picker-item" });
+				if (name === moc.icon) btn.classList.add("nexus-icon-picker-item-active");
+				btn.innerHTML = SMALL_ICONS[name] || "";
+				btn.createEl("span", { text: name, cls: "nexus-icon-picker-label" });
+				btn.addEventListener("click", async () => {
+					iconInput.value = name;
+					iconPreview.innerHTML = SMALL_ICONS[name] || SMALL_ICONS["MOC"] || "";
+					this.plugin.settings.mocs[index].icon = name;
 					await this.plugin.saveSettings();
+					// Update active state
+					iconGrid.querySelectorAll(".nexus-icon-picker-item").forEach((el) =>
+						el.classList.remove("nexus-icon-picker-item-active")
+					);
+					btn.classList.add("nexus-icon-picker-item-active");
 				});
-			});
+			}
+
+			if (matches.length === 0) {
+				iconGrid.createEl("div", {
+					text: "No icons found",
+					cls: "nexus-icon-picker-empty",
+				});
+			}
+		};
+
+		renderIconGrid("");
+
+		iconInput.addEventListener("input", () => {
+			renderIconGrid(iconInput.value);
+		});
+
+		iconInput.addEventListener("focus", () => {
+			iconGrid.classList.add("nexus-icon-picker-grid-open");
+			renderIconGrid(iconInput.value);
+		});
+
+		iconInput.addEventListener("blur", () => {
+			// Delay to allow click on grid item
+			setTimeout(() => {
+				iconGrid.classList.remove("nexus-icon-picker-grid-open");
+			}, 200);
+		});
+
+		iconInput.addEventListener("keydown", (e) => {
+			if (e.key === "Escape") {
+				iconInput.blur();
+			}
+		});
 
 		new Setting(containerEl)
 			.setName("Accent color")
@@ -768,7 +899,7 @@ export class NexusSettingTab extends PluginSettingTab {
 		const preview = renderFiglet(this.plugin.settings.headerText || "PREVIEW");
 		const pre = container.createEl("pre", { text: preview, cls: "ascii-header-preview" });
 		pre.style.color = this.plugin.settings.asciiDefaultColor;
-		pre.style.fontSize = `${this.plugin.settings.asciiDefaultSize}em`;
+		pre.style.setProperty("--nexus-ascii-size", String(this.plugin.settings.asciiDefaultSize));
 		pre.style.textAlign = this.plugin.settings.asciiDefaultAlign;
 		pre.style.overflowX = "auto";
 		pre.style.fontFamily = "monospace";

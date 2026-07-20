@@ -1,5 +1,29 @@
 # Changelog
 
+## WIP
+
+### Fixed
+
+- File rename handler now works for all file types — not just `.md`
+- Label auto-updates when file basename changes
+- Rename handler case-sensitivity: passes original case (not lowercased) to code block matching
+- Label no longer gets `.md` appended during rename (cleaned `newBasename`)
+- Multiple MOC paths fixed: Projects MOC (9 missing folder prefixes), Tracker Index MOC (typo), Journal MOC (3 wrong paths)
+- Renamed vault files to match code block paths (`MOsC` → `MOC`, `MOCw` → `MOC`)
+
+### Added
+
+- Expanded icon set from 9 to 40 icons (31 new)
+- Searchable icon picker in settings
+
+### Changed
+
+- Code block paths now require `.md` extension (parser auto-appends for backward compat)
+- Card click validates path via `getAbstractFileByPath()` — shows Notice if file not found
+- Settings migration auto-appends `.md` to existing extension-free paths on load
+
+---
+
 ## v1.2.0
 
 ### Fixed

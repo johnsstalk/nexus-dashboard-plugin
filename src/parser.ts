@@ -5,6 +5,11 @@ import {
 	CardConfig,
 } from "./types";
 
+/** Auto-append .md to extension-free paths */
+function ensureExt(path: string): string {
+	return /\.\w{1,10}$/.test(path) ? path : path + ".md";
+}
+
 export function parseDashboard(raw: string): DashboardConfig {
 	const trimmed = raw.trim();
 	if (!trimmed) {
@@ -12,7 +17,7 @@ export function parseDashboard(raw: string): DashboardConfig {
 	}
 
 	const config: DashboardConfig = {
-		header: { text: "", font: "", color: "", size: "normal", enabled: false },
+		header: { text: "", font: "", color: "", size: 1, enabled: false },
 		stats: { enabled: false, items: [] },
 		blocks: [],
 		recently: false,
@@ -94,10 +99,24 @@ export function parseDashboard(raw: string): DashboardConfig {
 
 		switch (context) {
 			case "header":
-				if (!config.header.enabled) {
-					config.header = { text: "", font: "", color: "", size: "normal", enabled: true };
+			if (!config.header.enabled) {
+				config.header = { text: "", font: "", color: "", size: 1, enabled: true };
+			}
+			if (kv.key === "size") {
+				if (kv.value === "small") {
+					config.header.size = 0.6;
+				} else if (kv.value === "normal") {
+					config.header.size = 1;
+				} else {
+					const n = Number(kv.value);
+					config.header.size = Number.isFinite(n) && n > 0 ? n : 1;
 				}
+			} else if (kv.key === "mobileSize") {
+				const n = Number(kv.value);
+				config.header.mobileSize = Number.isFinite(n) && n > 0 ? n : undefined;
+			} else {
 				applyKV(config.header, kv);
+			}
 				break;
 			case "stats":
 				if (kv.key === "show") {
@@ -176,7 +195,7 @@ function applySectionKV(section: SectionConfig, kv: { key: string; value: string
 function applyCardKV(card: Partial<CardConfig>, kv: { key: string; value: string }) {
 	if (kv.key === "label") card.label = kv.value;
 	if (kv.key === "desc") card.desc = kv.value;
-	if (kv.key === "path") card.path = kv.value;
+	if (kv.key === "path") card.path = ensureExt(kv.value);
 	if (kv.key === "icon") card.icon = kv.value;
 	if (kv.key === "color") card.color = kv.value;
 	if (kv.key === "type") card.type = kv.value === "mini" ? "mini" : "big";
@@ -196,7 +215,7 @@ function parseValue(line: string, prefix: string): string {
 
 export function buildDefaultConfig(): DashboardConfig {
 	return {
-		header: { text: "", font: "ANSI Shadow", color: "#8A5CF6", size: "normal", enabled: false },
+		header: { text: "", font: "ANSI Shadow", color: "#8A5CF6", size: 1, enabled: false },
 		stats: { enabled: false, items: [] },
 		blocks: [],
 		recently: false,

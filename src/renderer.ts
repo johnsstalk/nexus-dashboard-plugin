@@ -1,4 +1,4 @@
-import { MarkdownRenderChild, TFolder, TFile, Menu } from "obsidian";
+import { MarkdownRenderChild, TFolder, Menu, Notice, TFile } from "obsidian";
 import type NexusDashboardPlugin from "./main";
 import { NexusSettings, DIVIDER_PRESETS } from "./settings";
 import { SMALL_ICONS, ICONS, DEFAULT_ICON } from "./icons";
@@ -11,6 +11,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 	private source: string;
 	private sourcePath: string;
 	private rendering = false;
+	private renderQueued = false;
 
 	constructor(containerEl: HTMLElement, plugin: NexusDashboardPlugin, source: string, sourcePath: string) {
 		super(containerEl);
@@ -29,12 +30,19 @@ export class NexusRenderer extends MarkdownRenderChild {
 	}
 
 	async render(): Promise<void> {
-		if (this.rendering) return;
+		if (this.rendering) {
+			this.renderQueued = true;
+			return;
+		}
 		this.rendering = true;
 		try {
 			await this._render();
 		} finally {
 			this.rendering = false;
+			if (this.renderQueued) {
+				this.renderQueued = false;
+				this.render();
+			}
 		}
 	}
 
@@ -79,7 +87,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 
 		// ── Graph links ───────────────────────────────────
 		if (config.graph.enabled) {
-			await this.renderGraphLinks(config);
+			this.renderGraphLinks(containerEl, config);
 		}
 	}
 
@@ -135,7 +143,8 @@ export class NexusRenderer extends MarkdownRenderChild {
 			text: opts.headerText || "NEXUS",
 			font: opts.asciiDefaultFont || "ANSI Shadow",
 			color: opts.asciiDefaultColor || "#8A5CF6",
-			size: "normal",
+			size: opts.asciiDefaultSize ?? 1,
+			mobileSize: opts.asciiMobileSize,
 			enabled: true,
 			align: opts.asciiDefaultAlign || "center",
 		};
@@ -178,7 +187,22 @@ export class NexusRenderer extends MarkdownRenderChild {
 		wrapper.dataset.align = header.align || "center";
 		const pre = wrapper.createEl("pre", { text: rendered, cls: "ascii-header-output" });
 		if (header.color) pre.style.color = header.color;
-		if (header.size === "small") pre.style.fontSize = "0.6em";
+		pre.style.setProperty("--nexus-ascii-size", String(header.size));
+		pre.style.setProperty("--nexus-ascii-mobile-size", String(header.mobileSize ?? header.size * 0.5));
+
+		if (document.body.classList.contains("is-phone")) {
+			pre.style.visibility = "hidden";
+			requestAnimationFrame(() => {
+				const naturalWidth = pre.scrollWidth;
+				const availableWidth = wrapper.clientWidth;
+				if (naturalWidth > availableWidth && availableWidth > 0) {
+					const currentPx = parseFloat(getComputedStyle(pre).fontSize);
+					const targetPx = (availableWidth / naturalWidth) * currentPx;
+					pre.style.setProperty("font-size", `${targetPx}px`, "important");
+				}
+				pre.style.visibility = "visible";
+			});
+		}
 	}
 
 	// ── Render: Stats Bar ──────────────────────────────────────
@@ -252,7 +276,12 @@ export class NexusRenderer extends MarkdownRenderChild {
 		cardEl.addEventListener("click", (e) => {
 			e.preventDefault();
 			if (card.path) {
-				this.plugin.app.workspace.openLinkText(card.path, "", false);
+				const file = this.plugin.app.vault.getAbstractFileByPath(card.path);
+				if (file instanceof TFile) {
+					this.plugin.app.workspace.openLinkText(card.path, "", false);
+				} else {
+					new Notice(`File not found: ${card.path}`);
+				}
 			}
 		});
 
@@ -263,7 +292,12 @@ export class NexusRenderer extends MarkdownRenderChild {
 
 			menu.addItem((item) => {
 				item.setTitle("Open").setIcon("file-text").onClick(() => {
-					this.plugin.app.workspace.openLinkText(card.path, "", false);
+					const file = this.plugin.app.vault.getAbstractFileByPath(card.path);
+					if (file instanceof TFile) {
+						this.plugin.app.workspace.openLinkText(card.path, "", false);
+					} else {
+						new Notice(`File not found: ${card.path}`);
+					}
 				});
 			});
 
@@ -381,14 +415,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 
 	// ── Render: Graph Links ────────────────────────────────────
 
-	private static readonly GRAPH_START = `<span class="nexus-graph-links">`;
-	private static readonly GRAPH_END = `</span>`;
-
-	private async renderGraphLinks(config: DashboardConfig): Promise<void> {
-		await this.injectGraphLinksToFile(config);
-	}
-
-	private computeGraphWikilinks(config: DashboardConfig): string {
+	private renderGraphLinks(containerEl: HTMLElement, config: DashboardConfig): void {
 		const paths: string[] = [];
 		const exclude = config.graph.exclude;
 
@@ -402,39 +429,12 @@ export class NexusRenderer extends MarkdownRenderChild {
 			}
 		}
 
-		if (paths.length === 0) return "";
-		return paths.map((p) => `[[${p}]]`).join(" ");
-	}
+		if (paths.length === 0) return;
 
-	private async injectGraphLinksToFile(config: DashboardConfig): Promise<void> {
-		const file = this.plugin.app.vault.getAbstractFileByPath(this.sourcePath);
-		if (!(file instanceof TFile)) return;
-
-		const wikilinks = this.computeGraphWikilinks(config);
-		const { GRAPH_START, GRAPH_END } = NexusRenderer;
-
-		const newBlock = wikilinks ? `${GRAPH_START}${wikilinks}${GRAPH_END}` : "";
-
-		try {
-			const content = await this.plugin.app.vault.cachedRead(file);
-			const startIdx = content.indexOf(GRAPH_START);
-			const endIdx = content.indexOf(GRAPH_END);
-
-			let updated: string;
-			if (startIdx !== -1 && endIdx !== -1 && startIdx < endIdx) {
-				const before = content.substring(0, startIdx);
-				const after = content.substring(endIdx + GRAPH_END.length);
-				updated = before + newBlock + after;
-			} else {
-				updated = content.trimEnd() + (newBlock ? `\n\n${newBlock}\n` : "\n");
-			}
-
-			if (updated !== content) {
-				await this.plugin.app.vault.modify(file, updated);
-			}
-		} catch (e) {
-			console.error("Nexus Dashboard: failed to inject graph links", e);
-		}
+		const wikilinks = paths.map((p) => `[[${p}]]`).join(" ");
+		const span = containerEl.createSpan({ cls: "nexus-graph-links" });
+		span.setText(wikilinks);
+		span.style.display = "none";
 	}
 
 	// ── Shared helpers ─────────────────────────────────────────
