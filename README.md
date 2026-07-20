@@ -1,6 +1,6 @@
 # Nexus Dashboard
 
-ASCII art banners + theme-aware dashboard for your Obsidian vault.
+Code-block driven MOC dashboard for Obsidian.
 
 ## Install
 
@@ -13,52 +13,124 @@ ASCII art banners + theme-aware dashboard for your Obsidian vault.
 
 Create a note with a `nexus-dashboard` code block:
 
-````md
+````
 ```nexus-dashboard
-stats: true
-recently: true
-showGraph: false
-
-header:
-  text: MY VAULT
-  color: #8A5CF6
-
-section:
-  cards:
-    - type: big
-      label: My Note
-      path: folder/Note
-      icon: Note
-      color: #FF6B6B
-    - type: mini
-      label: Quick Link
-      path: folder/Link
-      icon: Link
 ```
 ````
 
-## Standalone Dividers
+You can configure default settings in **Settings > Community Plugins > Nexus Dashboard**.
 
-Place a `divider:` block at the root level (outside any section):
+## Dashboard Components
 
-````md
+### ASCII header
+An ASCII art banner at the top of your dashboard.
+
+Properties: `text`, `font`, `color`, `size`, `mobileSize`, `align`
+
+````
+```nexus-dashboard
+header:
+  text: MY VAULT
+  font: ANSI Shadow
+  color: #8A5CF6
+  size: 1.0
+  mobileSize: 0.5
+  align: center
+```
+````
+
+### Stats bar
+Shows file/folder counts from selected folders.
+
+Properties: `show` (true/false)
+
+````
+```nexus-dashboard
+stats: true
+```
+````
+
+### Section
+A card grid area.
+
+Properties: `columns` (1–4)
+
+````
+```nexus-dashboard
+section:
+  columns: 2
+```
+````
+
+### Card
+A navigation link inside a section.
+
+Card entries start with `- type:` (big or mini). Each section must contain only one card type — the section picks a single grid (mini-grid or big-grid) based on the first card, mixing types forces all cards into the wrong layout.
+
+Properties: `type` (big/mini), `label`, `desc`, `path`, `icon`, `color`, `columns` (1–4 on parent section)
+
+Big cards:
+
+````
+```nexus-dashboard
+section:
+  columns: 2
+  cards:
+    - type: big
+      label: Journal
+      desc: Daily reflections
+      path: MOC/Journal MOC.md
+      icon: Journal
+      color: #8A5CF6
+```
+````
+
+Mini cards:
+
+````
+```nexus-dashboard
+section:
+  columns: 3
+  cards:
+    - type: mini
+      label: Quick Link
+      path: MOC/Book Notes MOC.md
+      icon: Book
+```
+````
+
+### Divider
+A horizontal separator between sections.
+
+Properties: `title`, `type` (default, bold, subtle, gradient, dashed)
+
+````
 ```nexus-dashboard
 divider:
   type: bold
-  title: Projects
+  title: Archive
 ```
 ````
 
-Available types: `default`, `bold`, `subtle`, `gradient`, `dashed`
+### Recently modified
+Shows the N most recently modified notes.
 
-## ASCII Art
+````
+```nexus-dashboard
+recently: true
+```
+````
 
-````md
-```ascii
-font: ANSI Shadow
-color: #FF6B6B
-size: 1.5
-My Title
+### Graph links
+Injects wiki links at the bottom for visual navigation.
+
+Properties: `showGraph`, `exclude` (comma-separated folder names)
+
+````
+```nexus-dashboard
+graph:
+  showGraph: true
+  exclude: Templates,Attachments
 ```
 ````
 
@@ -66,118 +138,22 @@ My Title
 
 Open **Ctrl+P** / **Cmd+P** and search:
 
-- `Open dashboard`
-- `Insert Nexus Dashboard code block`
-- `Insert ASCII art block`
-- `Render selection as ASCII art`
-
----
-
-## Code Block Reference
-
-### `nexus-dashboard`
-
-#### Root Keys
-
-| Key | Values | Default | Description |
-|-----|--------|---------|-------------|
-| `stats` | `true`, `false` | `false` | Show stats bar |
-| `recently` | `true`, `false` | `false` | Show recently modified notes |
-| `showGraph` | `true`, `false` | `false` | Show graph links |
-| `recentCount` | number | `9` | Number of recently modified notes |
-
-#### Header
-
-```
-header:
-  text: NEXUS
-  font: ANSI Shadow
-  color: #8A5CF6
-  size: normal
-  align: center
-```
-
-| Property | Values | Default |
-|----------|--------|---------|
-| `text` | string | `NEXUS` |
-| `font` | `ANSI Shadow`, `Small Slant` | `ANSI Shadow` |
-| `color` | CSS color | `#8A5CF6` |
-| `size` | `normal`, `small` | `normal` |
-| `align` | `left`, `center`, `right` | `center` |
-
-#### Section
-
-```
-section:
-  columns: 2
-  cards:
-    - type: big
-      label: Note Title
-      desc: Short description
-      path: folder/Note
-      icon: Note
-      color: #FF6B6B
-```
-
-| Property | Values | Default | Description |
-|----------|--------|---------|-------------|
-| `columns` | `1`, `2`, `3`, `4` | `2` | Number of card columns |
-
-#### Card
-
-| Property | Values | Default |
-|----------|--------|---------|
-| `type` | `big`, `mini` | `big` |
-| `label` | string | — |
-| `desc` | string | — |
-| `path` | vault path | — |
-| `icon` | icon name | — |
-| `color` | CSS color | — |
-
-#### Divider
-
-```
-divider:
-  type: bold
-  title: Section Title
-```
-
-| Property | Values | Default |
-|----------|--------|---------|
-| `type` | `default`, `bold`, `subtle`, `gradient`, `dashed` | `default` |
-| `title` | string | — |
-
-#### Graph
-
-```
-graph:
-  exclude: Templates,Attachments
-```
-
----
-
-### `ascii`
-
-| Property | Values | Default |
-|----------|--------|---------|
-| `font` | `ANSI Shadow`, `Small Slant` | `ANSI Shadow` |
-| `color` | CSS color | `#8A5CF6` |
-| `size` | number (em) | `1.0` |
-| `align` | `left`, `center`, `right` | `center` |
-
----
+- `Open dashboard` — opens the full dashboard view
+- `Insert Nexus Dashboard code block` — inserts an empty code block
+- `Insert ASCII art block` — inserts a header code block
+- `Render selection as ASCII art` — wraps selected text in a header block
 
 ## Settings
 
-Open **Settings > Nexus Dashboard** to configure defaults:
+Open **Settings > Community Plugins > Nexus Dashboard** to configure:
 
-- **General** — open on startup, graph links toggle
-- **Layout** — MOC cards (drag-and-drop reorder)
-- **ASCII Header** — title, font, color, size
-- **Stats Bar** — folder + label pairs (click folder to select)
-- **Recently Modified** — count, exclude folders
-- **Divider Design** — 5 presets (default, bold, subtle, gradient, dashed)
+- **General** — open on startup
+- **ASCII header** — title, font, color, size, mobile size, alignment
+- **Layout** — MOC grid columns, mini grid columns, show graph links, add/reorder/edit MOC cards
+- **Stats** — show stats bar, add/edit/remove stat entries
+- **Recently modified** — show toggle, count, exclude folders, divider label, divider design presets
 - **Export / Import** — save / restore settings as JSON
+- **Reset** — reset to defaults
 
 ## Development
 
