@@ -5,11 +5,13 @@
 		"module": "ESNext",
 		"target": "ES2020",
 		"allowJs": true,
-		"noImplicitAny": true,
+		"strict": true,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
+		"noFallthroughCasesInSwitch": true,
 		"moduleResolution": "bundler",
 		"isolatedModules": true,
-		"strictNullChecks": true,
-		"lib": ["DOM", "ES2020"]
+		"lib": ["DOM", "ES2021"]
 	},
 	"include": ["src/**/*.ts"]
 }

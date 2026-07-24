@@ -1,6 +1,7 @@
 import { MarkdownRenderChild, TFolder, Menu, Notice, TFile } from "obsidian";
 import type NexusDashboardPlugin from "./main";
-import { NexusSettings, DIVIDER_PRESETS } from "./settings";
+import { NexusSettings } from "./types";
+import { DIVIDER_PRESETS } from "./defaults";
 import { SMALL_ICONS, ICONS, DEFAULT_ICON } from "./icons";
 import { renderFiglet, getFontByName } from "./figlet";
 import { parseDashboard, buildDefaultConfig } from "./parser";
@@ -13,7 +14,7 @@ import {
 	CardConfig,
 	LinksConfig,
 	RowConfig,
-	TabsConfig,
+	StackConfig,
 	RecentlyConfig,
 	SearchConfig,
 } from "./types";
@@ -24,6 +25,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 	private sourcePath: string;
 	private rendering = false;
 	private renderQueued = false;
+	private searchAbortController: AbortController | null = null;
 
 	constructor(containerEl: HTMLElement, plugin: NexusDashboardPlugin, source: string, sourcePath: string) {
 		super(containerEl);
@@ -39,6 +41,10 @@ export class NexusRenderer extends MarkdownRenderChild {
 
 	onunload(): void {
 		this.plugin.activeRenderers.delete(this);
+		if (this.searchAbortController) {
+			this.searchAbortController.abort();
+			this.searchAbortController = null;
+		}
 	}
 
 	async render(): Promise<void> {
@@ -90,7 +96,11 @@ export class NexusRenderer extends MarkdownRenderChild {
 
 		// ── Blocks (unified dispatch) ─────────────────────
 		for (const block of config.blocks) {
-			await this.renderBlock(containerEl, block, config);
+			try {
+				await this.renderBlock(containerEl, block, config);
+			} catch (err) {
+				console.error("[NEXUS RENDER ERROR] block render failed:", err);
+			}
 		}
 
 		// ── Recently modified (root-level boolean) ────────
@@ -106,9 +116,9 @@ export class NexusRenderer extends MarkdownRenderChild {
 			await this.renderRecentlyModified(containerEl, recentConfig);
 		}
 
-		// ── Graph links ───────────────────────────────────
+		// ── Graph links (metadataCache injection) ─────────
 		if (config.graph.enabled) {
-			this.renderGraphLinks(containerEl, config);
+			this.injectGraphLinks(config);
 		}
 	}
 
@@ -128,8 +138,8 @@ export class NexusRenderer extends MarkdownRenderChild {
 			case "row":
 				this.renderRow(containerEl, block, config);
 				break;
-			case "tabs":
-				this.renderTabs(containerEl, block, config);
+			case "stack":
+				this.renderStack(containerEl, block, config);
 				break;
 			case "recently":
 				await this.renderRecentlyModified(containerEl, block);
@@ -150,7 +160,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 			merged.header = { ...base.header, enabled: false };
 		}
 
-		// Stats
+		// Stats — respect settings toggle when code block doesn't override
 		if (source.includes("stats:")) {
 			merged.stats = { ...base.stats, enabled: override.stats.enabled };
 		} else {
@@ -162,7 +172,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 			source.includes("divider:") ||
 			source.includes("links:") ||
 			source.includes("row:") ||
-			source.includes("tabs:");
+			source.includes("stack:");
 		if (hasBlocks) {
 			merged.blocks = override.blocks;
 		} else {
@@ -176,11 +186,9 @@ export class NexusRenderer extends MarkdownRenderChild {
 			merged.recently = false;
 		}
 
-		// Graph
+		// Graph — respect settings toggle when code block doesn't override
 		if (source.includes("graph:")) {
 			merged.graph = { ...base.graph, ...override.graph };
-		} else {
-			merged.graph = { ...base.graph, enabled: false };
 		}
 
 		// Search
@@ -220,7 +228,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 		if (opts.mocs && opts.mocs.length > 0) {
 			const section: SectionConfig = {
 				kind: "section",
-				columns: opts.mocGridColumns as 1 | 2 | 3 | 4,
+				columns: opts.mocGridColumns,
 				cards: opts.mocs.map((moc) => ({
 					type: "big" as const,
 					label: moc.title,
@@ -306,9 +314,16 @@ export class NexusRenderer extends MarkdownRenderChild {
 	// ── Render: Section ───────────────────────────────────────
 
 	private renderSection(containerEl: HTMLElement, section: SectionConfig): void {
-		if (section.cards.length === 0) return;
+		if (section.cards.length === 0 && !section.divider) return;
 
 		const sectionEl = containerEl.createDiv({ cls: "nexus-section" });
+
+		// Render divider before cards if present
+		if (section.divider && section.divider.title) {
+			this.renderDivider(sectionEl, section.divider.title, section.divider.type);
+		}
+
+		if (section.cards.length === 0) return;
 
 		const hasMini = section.cards.some(c => c.type === "mini");
 		const hasBig = section.cards.some(c => c.type === "big");
@@ -366,69 +381,77 @@ export class NexusRenderer extends MarkdownRenderChild {
 		if (row.children.length === 0) return;
 
 		const cols = row.columns || row.children.length || 2;
-		const proportion = row.proportion || this.getRowProportion(row);
+		const defaultProportion = this.getRowProportion(row);
+		const rowIndex = config.blocks.indexOf(row);
+
+		// Load saved proportion from drag, then user-specified, then default
+		const savedProportion = this.getRowProportionSaved(rowIndex >= 0 ? rowIndex : 0);
+		const proportion = savedProportion || row.proportion || defaultProportion;
 
 		const rowEl = containerEl.createDiv({ cls: "nexus-row" });
 		rowEl.style.setProperty("--nexus-row-cols", String(cols));
 		rowEl.style.setProperty("--nexus-row-proportion", proportion);
 
+		// Apply gap property
+		if (row.gap) {
+			rowEl.style.gap = row.gap;
+		}
+
 		const children = row.children;
 		const colWidths = this.parseProportion(proportion, cols);
+		const isCustomProportion = proportion !== defaultProportion;
 
 		for (let i = 0; i < children.length && i < cols; i++) {
 			const colEl = rowEl.createDiv({ cls: "nexus-row-col" });
-			colEl.style.setProperty("--nexus-row-width", colWidths[i] || `${100 / cols}%`);
+			if (isCustomProportion) {
+				colEl.style.setProperty("--nexus-row-width", colWidths[i] || `${100 / cols}%`);
+			}
 
-			// Render child block(s) into this column
 			const child = children[i];
 			if (child.kind === "section" || child.kind === "divider" || child.kind === "links" || child.kind === "recently") {
 				this.renderBlock(colEl, child, config);
-			} else if (child.kind === "row" || child.kind === "tabs") {
+			} else if (child.kind === "row" || child.kind === "stack") {
 				this.renderBlock(colEl, child, config);
 			}
 
-			// Add draggable divider between columns (not after last)
 			if (i < children.length - 1 && i < cols - 1) {
 				const dividerEl = rowEl.createDiv({ cls: "nexus-row-divider" });
-				this.setupColumnDrag(dividerEl, rowEl, colWidths, i);
+				this.setupColumnDrag(dividerEl, rowEl, colWidths, i, rowIndex);
 			}
 		}
 	}
 
-	// ── Render: Tabs ──────────────────────────────────────────
+	// ── Render: Stack ─────────────────────────────────────────
 
-	private renderTabs(containerEl: HTMLElement, tabs: TabsConfig, config: DashboardConfig): void {
-		if (tabs.items.length === 0) return;
+	private renderStack(containerEl: HTMLElement, stack: StackConfig, config: DashboardConfig): void {
+		if (stack.children.length === 0) return;
 
-		const wrapper = containerEl.createDiv({ cls: "nexus-tabs" });
-		const activeIdx = tabs.active ?? 0;
+		const stackEl = containerEl.createDiv({ cls: "nexus-stack" });
 
-		// Tab bar
-		const tabBar = wrapper.createDiv({ cls: "nexus-tabs-bar" });
-		const panels: HTMLElement[] = [];
+		// Apply spacing (vertical gap)
+		if (stack.spacing) {
+			stackEl.style.gap = stack.spacing;
+		}
 
-		for (let i = 0; i < tabs.items.length; i++) {
-			const tab = tabs.items[i];
-			const tabBtn = tabBar.createEl("button", {
-				cls: `nexus-tab ${i === activeIdx ? "active" : ""}`,
-				text: tab.label,
-			});
+		// Apply horizontal alignment
+		if (stack.align && stack.align !== "stretch") {
+			stackEl.style.alignItems = stack.align === "left" ? "flex-start" : 
+									  stack.align === "right" ? "flex-end" : "center";
+		}
 
-			const panel = wrapper.createDiv({ cls: `nexus-tab-panel ${i === activeIdx ? "active" : ""}` });
-			panels.push(panel);
+		// Render children with dividers between them
+		for (let i = 0; i < stack.children.length; i++) {
+			const child = stack.children[i];
+			const itemEl = stackEl.createDiv({ cls: "nexus-stack-item" });
+			
+			if (child.kind === "section" || child.kind === "divider" || child.kind === "links" || child.kind === "recently") {
+				this.renderBlock(itemEl, child, config);
+			} else if (child.kind === "row") {
+				this.renderBlock(itemEl, child, config);
+			}
 
-			tabBtn.addEventListener("click", () => {
-				// Deactivate all
-				tabBar.querySelectorAll(".nexus-tab").forEach((el) => el.removeClass("active"));
-				panels.forEach((p) => p.removeClass("active"));
-				// Activate clicked
-				tabBtn.addClass("active");
-				panel.addClass("active");
-			});
-
-			// Render tab content
-			for (const block of tab.blocks) {
-				this.renderBlock(panel, block, config);
+			if (i < stack.children.length - 1) {
+				stackEl.createDiv({ cls: "nexus-stack-divider" });
 			}
 		}
 	}
@@ -501,12 +524,18 @@ export class NexusRenderer extends MarkdownRenderChild {
 			}
 		});
 
+		if (this.searchAbortController) {
+			this.searchAbortController.abort();
+		}
+		this.searchAbortController = new AbortController();
+		const signal = this.searchAbortController.signal;
+
 		document.addEventListener("click", (e) => {
 			if (!wrapper.contains(e.target as Node)) {
 				resultsEl.style.display = "none";
 				resultsEl.empty();
 			}
-		});
+		}, { signal });
 	}
 
 	// ── Render: Recently Modified ──────────────────────────────
@@ -543,7 +572,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 				if (cache?.frontmatter?.tag) {
 					tags.push(String(cache.frontmatter.tag).toLowerCase());
 				}
-				return config.tags!.some((t) => tags.includes(t.toLowerCase()));
+				return config.tags?.some((t) => tags.includes(t.toLowerCase())) ?? false;
 			});
 		}
 
@@ -589,18 +618,28 @@ export class NexusRenderer extends MarkdownRenderChild {
 
 	// ── Render: Graph Links ────────────────────────────────────
 
-	private renderGraphLinks(containerEl: HTMLElement, config: DashboardConfig): void {
+	/** Inject card paths into Obsidian's metadataCache for Graph View */
+	private injectGraphLinks(config: DashboardConfig): void {
 		const paths: string[] = [];
 		const exclude = config.graph.exclude;
-
 		this.collectCardPaths(config.blocks, paths, exclude);
-
 		if (paths.length === 0) return;
 
-		const wikilinks = paths.map((p) => `[[${p}]]`).join(" ");
-		const span = containerEl.createSpan({ cls: "nexus-graph-links" });
-		span.setText(wikilinks);
-		span.style.display = "none";
+		const sourcePath = this.sourcePath;
+		const resolvedLinks = this.plugin.app.metadataCache.resolvedLinks;
+
+		if (!resolvedLinks[sourcePath]) {
+			resolvedLinks[sourcePath] = {};
+		}
+
+		for (const p of paths) {
+			const file = this.plugin.app.vault.getAbstractFileByPath(p);
+			if (file) {
+				resolvedLinks[sourcePath][p] = (resolvedLinks[sourcePath][p] || 0) + 1;
+			}
+		}
+
+		this.plugin.app.metadataCache.trigger("resolve", sourcePath);
 	}
 
 	/** Recursively collect card paths from all block types */
@@ -614,10 +653,8 @@ export class NexusRenderer extends MarkdownRenderChild {
 				}
 			} else if (block.kind === "row") {
 				this.collectCardPaths(block.children, paths, exclude);
-			} else if (block.kind === "tabs") {
-				for (const tab of block.items) {
-					this.collectCardPaths(tab.blocks, paths, exclude);
-				}
+			} else if (block.kind === "stack") {
+				this.collectCardPaths(block.children, paths, exclude);
 			} else if (block.kind === "links") {
 				for (const item of block.items) {
 					if (item.url.startsWith("obsidian://")) {
@@ -775,14 +812,34 @@ export class NexusRenderer extends MarkdownRenderChild {
 		return widths;
 	}
 
-	private getRowProportionKey(rowIndex: number): string {
-		return `${this.sourcePath}:${rowIndex}`;
+	private getRowProportionKey(rowIndex: number, prefix: string = "row"): string {
+		return `${this.sourcePath}:${prefix}:${rowIndex}`;
+	}
+
+	private getRowProportionSaved(rowIndex: number, prefix: string = "row"): string | null {
+		const key = this.getRowProportionKey(rowIndex, prefix);
+		const sizes = this.plugin.settings.rowSizes;
+		if (sizes && sizes[key]) return sizes[key];
+
+		// Auto-migrate legacy key (format: {sourcePath}:0)
+		if (prefix === "row") {
+			const legacyKey = `${this.sourcePath}:0`;
+			if (sizes && sizes[legacyKey]) {
+				const val = sizes[legacyKey];
+				sizes[key] = val;
+				delete sizes[legacyKey];
+				this.plugin.saveSettings();
+				return val;
+			}
+		}
+		return null;
 	}
 
 	// ── Row: column drag ──────────────────────────────────────
 
-	private setupColumnDrag(dividerEl: HTMLElement, rowEl: HTMLElement, colWidths: string[], dividerIdx: number): void {
+	private setupColumnDrag(dividerEl: HTMLElement, rowEl: HTMLElement, colWidths: string[], dividerIdx: number, rowIndex: number): void {
 		const MIN_WIDTH = 20;
+		const DIVIDER_WIDTH = 8;
 		let isDragging = false;
 		let startX = 0;
 		let startLeftWidth = 0;
@@ -797,8 +854,10 @@ export class NexusRenderer extends MarkdownRenderChild {
 			const rowRect = rowEl.getBoundingClientRect();
 			const dx = e.clientX - startX;
 			const rowWidth = rowRect.width;
+			const numDividers = cols.length - 1;
+			const availableWidth = rowWidth - (numDividers * DIVIDER_WIDTH);
 
-			let leftPct = (startLeftWidth + dx) / rowWidth * 100;
+			let leftPct = (startLeftWidth + dx) / availableWidth * 100;
 			leftPct = Math.max(MIN_WIDTH, Math.min(100 - MIN_WIDTH, leftPct));
 			const rightPct = 100 - leftPct;
 
@@ -813,11 +872,10 @@ export class NexusRenderer extends MarkdownRenderChild {
 			document.removeEventListener("mousemove", onMouseMove);
 			document.removeEventListener("mouseup", onMouseUp);
 
-			// Save proportion
 			const leftPct = parseFloat(leftCol.style.getPropertyValue("--nexus-row-width")) || 50;
 			const rightPct = parseFloat(rightCol.style.getPropertyValue("--nexus-row-width")) || 50;
 			const proportion = `${Math.round(leftPct)}/${Math.round(rightPct)}`;
-			this.saveRowProportion(proportion);
+			this.saveRowProportion(proportion, rowIndex);
 		};
 
 		dividerEl.addEventListener("mousedown", (e) => {
@@ -831,8 +889,8 @@ export class NexusRenderer extends MarkdownRenderChild {
 		});
 	}
 
-	private saveRowProportion(proportion: string): void {
-		const key = this.getRowProportionKey(0);
+	private saveRowProportion(proportion: string, rowIndex: number): void {
+		const key = this.getRowProportionKey(rowIndex, "row");
 		const settings = this.plugin.settings;
 		if (!settings.rowSizes) settings.rowSizes = {};
 		settings.rowSizes[key] = proportion;

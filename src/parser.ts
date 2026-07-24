@@ -1,24 +1,37 @@
 import {
 	DashboardConfig,
-	DashboardBlock,
 	DividerBlockConfig,
 	SectionConfig,
 	CardConfig,
 	LinksConfig,
 	LinkItem,
 	RowConfig,
-	TabsConfig,
-	TabItem,
+	StackConfig,
 	RecentlyConfig,
 	SearchConfig,
 } from "./types";
+import { ensureExtension as ensureExt } from "./utils";
 
-/** Auto-append .md to extension-free paths */
-function ensureExt(path: string): string {
-	return /\.\w{1,10}$/.test(path) ? path : path + ".md";
+function finalizeCard(partial: Partial<CardConfig>): CardConfig {
+	return {
+		type: partial.type ?? "big",
+		label: partial.label ?? "",
+		desc: partial.desc,
+		path: partial.path ?? "",
+		icon: partial.icon ?? "MOC",
+	};
 }
 
-type ParseContext = "root" | "header" | "stats" | "divider" | "section" | "cards" | "graph" | "links" | "row" | "tabs" | "search" | "recently";
+function finalizeLinkItem(partial: Partial<LinkItem>): LinkItem {
+	return {
+		url: partial.url ?? "",
+		label: partial.label,
+		icon: partial.icon,
+		desc: partial.desc,
+	};
+}
+
+type ParseContext = "root" | "header" | "stats" | "divider" | "section" | "cards" | "graph" | "links" | "row" | "stack" | "search" | "recently" | "section-divider";
 
 export function parseDashboard(raw: string): DashboardConfig {
 	const trimmed = raw.trim();
@@ -39,19 +52,26 @@ export function parseDashboard(raw: string): DashboardConfig {
 	let currentDivider: DividerBlockConfig | null = null;
 	let currentSection: SectionConfig | null = null;
 	let currentCard: Partial<CardConfig> | null = null;
-	let currentTab: TabItem | null = null;
+	let currentLinks: LinksConfig | null = null;
+	let currentLinkItem: Partial<LinkItem> | null = null;
+	let currentRow: RowConfig | null = null;
+	let currentRowSectionsRemaining: number = 0;
+	let currentStack: StackConfig | null = null;
+	let stackInsideRow = false;
+	let stackIndent = -1;
 	let currentSearch: SearchConfig | null = null;
 	let currentRecently: RecentlyConfig | null = null;
 
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i].replace(/\r$/, "");
+		const indent = line.search(/\S/);
 		let t = line.trim();
 		if (!t || t.startsWith("#")) continue;
 
 		// Strip YAML list prefix for known keywords (e.g. "- section:" → "section:")
 		if (t.startsWith("- ")) {
 			const stripped = t.slice(2);
-			if (/^(header|stats|graph|divider|section|links|row|tabs|search|recently):/.test(stripped)) {
+			if (/^(header|stats|graph|divider|section|links|row|stack|search|recently):/.test(stripped)) {
 				t = stripped;
 			}
 		}
@@ -59,11 +79,13 @@ export function parseDashboard(raw: string): DashboardConfig {
 		// ── Context switches ──────────────────────────────
 		if (t === "header:") {
 			flushCurrent();
+			flushStack();
 			context = "header";
 			continue;
 		}
 		if (t.startsWith("stats:") && t.length > 6) {
 			flushCurrent();
+			flushStack();
 			const val = t.slice(6).trim();
 			config.stats.enabled = val === "true";
 			context = "stats";
@@ -71,80 +93,147 @@ export function parseDashboard(raw: string): DashboardConfig {
 		}
 		if (t === "stats:") {
 			flushCurrent();
+			flushStack();
 			context = "stats";
 			continue;
 		}
 		if (t === "graph:") {
 			flushCurrent();
+			flushStack();
 			context = "graph";
 			continue;
 		}
 		if (t === "divider:") {
+			if (context === "section" || context === "cards") {
+				if (currentSection && currentSection.divider) {
+					// Already has a divider — flush section first, create standalone divider
+					flushCurrent();
+					flushStack();
+					context = "divider";
+					currentDivider = { kind: "divider", title: "", type: undefined };
+					continue;
+				}
+				// First divider for this section — attach it
+				currentSection.divider = { kind: "divider", title: "", type: undefined };
+				context = "section-divider";
+				continue;
+			}
 			flushCurrent();
+			flushStack();
 			context = "divider";
 			currentDivider = { kind: "divider", title: "", type: undefined };
 			continue;
 		}
-		if (t === "section:") {
-			flushCurrent();
-			context = "section";
+
+		// ── Section inside stack (before root section:) ───
+		if (t === "section:" && context === "stack") {
+			flushCard();
 			currentSection = { kind: "section", columns: 2, cards: [] };
-			continue;
-		}
-		if (t === "cards:") {
-			context = "cards";
+			context = "section";
 			continue;
 		}
 
-		// ── New block types ──────────────────────────────
-		if (t === "links:") {
-			flushCurrent();
-			const parentIndent = line.search(/\S/);
-			// Pre-process: collect all indented children
-			const childLines = collectIndentedLines(lines, i + 1, parentIndent);
-			const parsed = parseLinksBlock(childLines);
-			currentLinks = { kind: "links", items: parsed.items, title: parsed.title, columns: parsed.columns };
-			config.blocks.push(currentLinks);
-			currentLinks = null;
-			i += childLines.length;
-			context = "root";
+		// ── Row inside stack (nested, before root row:) ───
+		if (t === "row:" && context === "stack") {
+			flushCard();
+			flushSection();
+			context = "row";
+			currentRow = { kind: "row", children: [] };
+			currentRowSectionsRemaining = 2;
 			continue;
 		}
+
+		if (t === "section:") {
+			// If a divider was just defined (context === "divider"), attach it to this section
+			// instead of flushing it as a standalone divider
+			const pendingDivider = (context === "divider" && currentDivider) ? currentDivider : null;
+			if (pendingDivider) {
+				currentDivider = null;
+			}
+			flushCurrent();
+			if (stackInsideRow && currentRow && currentStack && currentStack.children.length > 0 && indent <= stackIndent) {
+				flushStack();
+			}
+			context = "section";
+			currentSection = { kind: "section", columns: 2, cards: [] };
+			if (pendingDivider) {
+				currentSection.divider = pendingDivider;
+			}
+			continue;
+		}
+		if (t === "cards:") {
+			if (context !== "tab-section") {
+				context = "cards";
+			}
+			continue;
+		}
+
+		// ── Links block ─────────────────────────────────
+		if (t === "links:") {
+			const pendingDivider = (context === "divider" && currentDivider) ? currentDivider : null;
+			if (pendingDivider) {
+				currentDivider = null;
+			}
+			flushCurrent();
+			flushStack();
+			context = "links";
+			currentLinks = { kind: "links", items: [] };
+			if (pendingDivider) {
+				currentLinks.title = pendingDivider.title;
+			}
+			continue;
+		}
+
+		// ── Row marker ──────────────────────────────────
 		if (t === "row:") {
 			flushCurrent();
-			const parentIndent = line.search(/\S/);
-			// Pre-process: collect all indented children
-			const childLines = collectIndentedLines(lines, i + 1, parentIndent);
-			const childBlocks = parseChildBlocks(childLines);
-			currentRow = { kind: "row", children: childBlocks };
-			config.blocks.push(currentRow);
-			currentRow = null;
-			// Skip lines we consumed
-			i += childLines.length;
-			context = "root";
+			flushStack();
+			context = "row";
+			currentRow = { kind: "row", children: [] };
+			currentRowSectionsRemaining = 2; // default, overridden by columns:
 			continue;
 		}
-		if (t === "tabs:") {
+
+		// ── Stack inside row (nested, before root stack:) ───
+		if (t === "stack:" && context === "row") {
+			flushCard();
+			flushSection();
+			stackInsideRow = true;
+			stackIndent = indent;
+			currentRowSectionsRemaining--;
+			context = "stack";
+			currentStack = { kind: "stack", children: [] };
+				continue;
+		}
+
+		// ── Stack marker ────────────────────────────────
+		if (t === "stack:") {
 			flushCurrent();
-			const parentIndent = line.search(/\S/);
-			// Pre-process: collect all indented children
-			const childLines = collectIndentedLines(lines, i + 1, parentIndent);
-			const tabItems = parseTabItems(childLines);
-			currentTabs = { kind: "tabs", items: tabItems };
-			config.blocks.push(currentTabs);
-			currentTabs = null;
-			i += childLines.length;
-			context = "root";
+			flushStack();
+			// If still inside a row (multiple stacks in a row), maintain row context
+			if (currentRow && currentRowSectionsRemaining > 0) {
+				stackInsideRow = true;
+				stackIndent = indent;
+				currentRowSectionsRemaining--;
+			}
+			context = "stack";
+			currentStack = { kind: "stack", children: [] };
 			continue;
 		}
+
+
+
+		// ── Search block ────────────────────────────────
 		if (t === "search:") {
 			flushCurrent();
+			flushStack();
 			context = "search";
 			currentSearch = { show: true };
 			continue;
 		}
 		if (t === "recently:" && !isRootRecentlyContext(lines, i)) {
 			flushCurrent();
+			flushStack();
 			context = "recently";
 			currentRecently = { kind: "recently", show: true };
 			continue;
@@ -155,6 +244,13 @@ export function parseDashboard(raw: string): DashboardConfig {
 			flushCard();
 			currentCard = { type: parseValue(t, "- type:") === "mini" ? "mini" : "big" };
 			context = "cards";
+			continue;
+		}
+
+		// ── New link item entry ────────────────────────────
+		if (t.startsWith("- url:") && context === "links") {
+			flushLinkItem();
+			currentLinkItem = { url: parseValue(t, "- url:") };
 			continue;
 		}
 
@@ -201,6 +297,15 @@ export function parseDashboard(raw: string): DashboardConfig {
 			case "divider":
 				if (currentDivider) applyDividerKV(currentDivider, kv);
 				break;
+			case "section-divider":
+				if (kv.key === "title" || kv.key === "type") {
+					if (currentSection?.divider) applyDividerKV(currentSection.divider, kv);
+				} else {
+					// Not a divider key — revert to section context
+					context = "section";
+					if (currentSection) applySectionKV(currentSection, kv);
+				}
+				break;
 			case "section":
 				if (currentSection) applySectionKV(currentSection, kv);
 				break;
@@ -214,6 +319,32 @@ export function parseDashboard(raw: string): DashboardConfig {
 					config.graph.enabled = kv.value === "true";
 				}
 				break;
+			case "links":
+				if (currentLinkItem) {
+					applyLinkItemKV(currentLinkItem, kv);
+				} else if (currentLinks) {
+					applyLinksKV(currentLinks, kv);
+				}
+				break;
+			case "row":
+				if (currentRow) {
+					applyRowKV(currentRow, kv);
+					if (kv.key === "columns") {
+						const n = parseInt(kv.value, 10);
+						currentRowSectionsRemaining = Number.isFinite(n) && n >= 1 && n <= 4 ? n : 2;
+					}
+				}
+				break;
+		case "stack":
+			if (currentStack) {
+				if (kv.key === "spacing") currentStack.spacing = kv.value;
+				if (kv.key === "align") currentStack.align = kv.value as "left" | "center" | "right" | "stretch";
+
+			}
+			break;
+			case "row-card":
+				if (currentCard) applyCardKV(currentCard, kv);
+				break;
 			case "search":
 				if (currentSearch) applySearchKV(currentSearch, kv);
 				break;
@@ -225,11 +356,15 @@ export function parseDashboard(raw: string): DashboardConfig {
 
 	// Flush trailing block
 	flushCurrent();
+	flushStack();
+	flushRow();
 
 	return config;
 
 	function flushCurrent() {
 		flushCard();
+		flushLinkItem();
+		flushLinks();
 		flushSection();
 		flushDivider();
 		flushSearch();
@@ -238,19 +373,56 @@ export function parseDashboard(raw: string): DashboardConfig {
 
 	function flushCard() {
 		if (currentSection && currentCard) {
-			currentSection.cards.push(currentCard as CardConfig);
+			currentSection.cards.push(finalizeCard(currentCard));
 			currentCard = null;
+		}
+	}
+
+	function flushLinkItem() {
+		if (currentLinks && currentLinkItem) {
+			if (currentLinkItem.url) {
+				currentLinks.items.push(finalizeLinkItem(currentLinkItem));
+			}
+			currentLinkItem = null;
+		}
+	}
+
+	function flushLinks() {
+		flushLinkItem();
+		if (currentLinks) {
+			config.blocks.push(currentLinks);
+			currentLinks = null;
 		}
 	}
 
 	function flushSection() {
 		flushCard();
 		if (currentSection) {
-			config.blocks.push(currentSection);
+			if (currentStack) {
+				currentStack.children.push(currentSection);
+			} else if (currentRow && currentRowSectionsRemaining > 0) {
+				currentRow.children.push(currentSection);
+				currentRowSectionsRemaining--;
+				if (currentRowSectionsRemaining === 0) {
+					flushRow();
+				}
+			} else {
+				config.blocks.push(currentSection);
+			}
 			currentSection = null;
 		} else if (currentCard) {
-			const implicitSection: SectionConfig = { kind: "section", columns: 2, cards: [currentCard as CardConfig] };
-			config.blocks.push(implicitSection);
+			const implicitSection: SectionConfig = { kind: "section", columns: 2, cards: [finalizeCard(currentCard)] };
+			if (currentStack) {
+				currentStack.children.push(implicitSection);
+			} else if (currentRow && currentRowSectionsRemaining > 0) {
+				currentRow.children.push(implicitSection);
+				currentRowSectionsRemaining--;
+				if (currentRowSectionsRemaining === 0) {
+					flushRow();
+				}
+			} else {
+				config.blocks.push(implicitSection);
+			}
 			currentCard = null;
 		}
 	}
@@ -259,6 +431,42 @@ export function parseDashboard(raw: string): DashboardConfig {
 		if (currentDivider) {
 			config.blocks.push(currentDivider);
 			currentDivider = null;
+		}
+	}
+
+	function flushRow() {
+		if (currentRow) {
+			if (currentRow.children.length > 0) {
+				if (currentStack) {
+					currentStack.children.push(currentRow);
+				} else {
+					config.blocks.push(currentRow);
+				}
+			}
+			currentRow = null;
+			currentRowSectionsRemaining = 0;
+		}
+	}
+
+	function flushStack() {
+		if (currentStack) {
+			flushSection();
+			if (currentStack.children.length > 0) {
+				if (stackInsideRow && currentRow) {
+					currentRow.children.push(currentStack);
+					currentStack = null;
+					if (currentRowSectionsRemaining === 0) {
+						flushRow();
+					}
+				} else {
+					config.blocks.push(currentStack);
+				}
+			}
+			if (currentStack) {
+				currentStack = null;
+				stackInsideRow = false;
+				stackIndent = -1;
+			}
 		}
 	}
 
@@ -277,251 +485,9 @@ export function parseDashboard(raw: string): DashboardConfig {
 	}
 }
 
-// ── Indent-based child extraction ────────────────────────
-
-/** Collect lines that are indented more than the parent keyword's indent */
-function collectIndentedLines(allLines: string[], startIdx: number, parentIndent: number = -1): string[] {
-	const collected: string[] = [];
-	if (startIdx >= allLines.length) return collected;
-
-	let baseIndent = parentIndent;
-	if (baseIndent === -1) {
-		for (let j = startIdx; j < allLines.length; j++) {
-			const raw = allLines[j].replace(/\r$/, "");
-			if (raw.trim() === "" || raw.trim().startsWith("#")) continue;
-			baseIndent = raw.search(/\S/);
-			break;
-		}
-	}
-	if (baseIndent === -1) return collected;
-
-	for (let j = startIdx; j < allLines.length; j++) {
-		const raw = allLines[j].replace(/\r$/, "");
-		const trimmedLine = raw.trim();
-		if (trimmedLine === "" || trimmedLine.startsWith("#")) {
-			collected.push(raw);
-			continue;
-		}
-		const indent = raw.search(/\S/);
-		if (indent > baseIndent) {
-			collected.push(raw);
-		} else {
-			break;
-		}
-	}
-	return collected;
-}
-
-/** Parse collected indented lines as child blocks for Row */
-function parseChildBlocks(childLines: string[]): DashboardBlock[] {
-	const blocks: DashboardBlock[] = [];
-	if (childLines.length === 0) return blocks;
-
-	// Determine the base indent level
-	let baseIndent = -1;
-	for (const raw of childLines) {
-		const t = raw.trim();
-		if (t === "" || t.startsWith("#")) continue;
-		baseIndent = raw.search(/\S/);
-		break;
-	}
-	if (baseIndent === -1) return blocks;
-
-	// Strip base indent and rejoin as a string for parseDashboard
-	const stripped = childLines.map((line) => {
-		if (line.trim() === "") return "";
-		return line.slice(baseIndent);
-	}).join("\n");
-
-	const childConfig = parseDashboard(stripped);
-	return childConfig.blocks;
-}
-
-/** Parse collected indented lines as tab items for Tabs */
-function parseTabItems(childLines: string[]): TabItem[] {
-	const items: TabItem[] = [];
-	if (childLines.length === 0) return items;
-
-	// Determine base indent
-	let baseIndent = -1;
-	for (const raw of childLines) {
-		const t = raw.trim();
-		if (t === "" || t.startsWith("#")) continue;
-		baseIndent = raw.search(/\S/);
-		break;
-	}
-	if (baseIndent === -1) return items;
-
-	// Split into tab entries: each "- title:" or "- label:" starts a new tab
-	let currentTabTitle = "";
-	let currentTabLines: string[] = [];
-	let tabIndent = -1;
-
-	for (const raw of childLines) {
-		const t = raw.trim();
-		if (t === "" || t.startsWith("#")) {
-			if (currentTabTitle) currentTabLines.push(raw);
-			continue;
-		}
-		const indent = raw.search(/\S/);
-
-		// Check if this is a tab entry (- title: ... or - label: ...)
-		const isTabEntry = t.startsWith("- title:") || t.startsWith("- title :") || t.startsWith("- label:") || t.startsWith("- label :");
-		if (isTabEntry) {
-			// Save previous tab
-			if (currentTabTitle) {
-				const tabBlocks = parseChildBlocks(currentTabLines);
-				items.push({
-					id: `tab-${items.length}`,
-					label: currentTabTitle,
-					blocks: tabBlocks,
-				});
-			}
-			const prefix = t.startsWith("- title") ? (t.startsWith("- title:") ? "- title:" : "- title :") : (t.startsWith("- label:") ? "- label:" : "- label :");
-			currentTabTitle = parseValue(t, prefix);
-			currentTabLines = [];
-			tabIndent = indent;
-		} else if (currentTabTitle && indent > tabIndent) {
-			currentTabLines.push(raw);
-		} else if (currentTabTitle && indent <= tabIndent) {
-			// End of current tab's content
-			const tabBlocks = parseChildBlocks(currentTabLines);
-			items.push({
-				id: `tab-${items.length}`,
-				label: currentTabTitle,
-				blocks: tabBlocks,
-			});
-			currentTabTitle = "";
-			currentTabLines = [];
-			// Re-process this line in case it's another tab entry
-			const t2 = raw.trim();
-			if (t2.startsWith("- title:") || t2.startsWith("- title :") || t2.startsWith("- label:") || t2.startsWith("- label :")) {
-				const prefix2 = t2.startsWith("- title") ? (t2.startsWith("- title:") ? "- title:" : "- title :") : (t2.startsWith("- label:") ? "- label:" : "- label :");
-				currentTabTitle = parseValue(t2, prefix2);
-				currentTabLines = [];
-				tabIndent = indent;
-			}
-		}
-	}
-
-	// Flush last tab
-	if (currentTabTitle) {
-		const tabBlocks = parseChildBlocks(currentTabLines);
-		items.push({
-			id: `tab-${items.length}`,
-			label: currentTabTitle,
-			blocks: tabBlocks,
-		});
-	}
-
-	return items;
-}
-
-/** Parse collected indented lines as a Links block with items list */
-function parseLinksBlock(childLines: string[]): { title?: string; columns?: 1 | 2 | 3 | 4; items: LinkItem[] } {
-	const result: { title?: string; columns?: 1 | 2 | 3 | 4; items: LinkItem[] } = { items: [] };
-	if (childLines.length === 0) return result;
-
-	let baseIndent = -1;
-	for (const raw of childLines) {
-		const t = raw.trim();
-		if (t === "" || t.startsWith("#")) continue;
-		baseIndent = raw.search(/\S/);
-		break;
-	}
-	if (baseIndent === -1) return result;
-
-	// Find items: line index and its indent
-	let itemsIdx = -1;
-	let itemsIndent = -1;
-	for (let j = 0; j < childLines.length; j++) {
-		const t = childLines[j].trim();
-		if (t === "items:" || t === "items :") {
-			itemsIdx = j;
-			itemsIndent = childLines[j].search(/\S/);
-			break;
-		}
-	}
-
-	// Parse direct properties (before items:)
-	const limit = itemsIdx === -1 ? childLines.length : itemsIdx;
-	for (let j = 0; j < limit; j++) {
-		const t = childLines[j].trim();
-		if (!t || t.startsWith("#")) continue;
-		const kv = splitKV(t);
-		if (!kv) continue;
-		if (kv.key === "title") result.title = kv.value;
-		if (kv.key === "columns") {
-			const n = parseInt(kv.value, 10);
-			result.columns = (Number.isFinite(n) && n >= 1 && n <= 4 ? n : 3) as 1 | 2 | 3 | 4;
-		}
-	}
-
-	// Parse items list (after items:)
-	if (itemsIdx >= 0) {
-		let currentItem: Partial<LinkItem> | null = null;
-		let itemIndent = -1;
-
-		for (let j = itemsIdx + 1; j < childLines.length; j++) {
-			const raw = childLines[j];
-			const t = raw.trim();
-			if (!t || t.startsWith("#")) continue;
-			const indent = raw.search(/\S/);
-
-			// Left the items block
-			if (indent <= itemsIndent && !t.startsWith("- ")) break;
-
-			// New item entry: "- url: ..." or "- label: ..." at indent > itemsIndent
-			if (t.startsWith("- ") && indent > itemsIndent) {
-				// Flush previous item
-				if (currentItem && (currentItem.url || currentItem.label)) {
-					result.items.push(currentItem as LinkItem);
-				}
-				currentItem = {};
-				itemIndent = indent;
-				// Parse the kv after "- "
-				const inner = t.slice(2);
-				const kv = splitKV(inner);
-				if (kv) {
-					if (kv.key === "url") currentItem.url = kv.value;
-					if (kv.key === "label") currentItem.label = kv.value;
-					if (kv.key === "icon") currentItem.icon = kv.value;
-				}
-			} else if (currentItem && indent >= itemIndent) {
-				// Sub-property of current item
-				const kv = splitKV(t);
-				if (kv) {
-					if (kv.key === "url") currentItem.url = kv.value;
-					if (kv.key === "label") currentItem.label = kv.value;
-					if (kv.key === "icon") currentItem.icon = kv.value;
-				}
-			}
-		}
-		// Flush last item
-		if (currentItem && (currentItem.url || currentItem.label)) {
-			result.items.push(currentItem as LinkItem);
-		}
-	}
-
-	return result;
-}
-
-/** Determine if `recently:` at this line is the root-level boolean form */
-function isRootRecentlyContext(allLines: string[], currentIdx: number): boolean {
-	// Check if the next non-empty line is indented (block form) or not (boolean form)
-	for (let j = currentIdx + 1; j < allLines.length; j++) {
-		const t = allLines[j].replace(/\r$/, "").trim();
-		if (t === "" || t.startsWith("#")) continue;
-		// If next line is indented, it's the block form
-		const indent = allLines[j].search(/\S/);
-		return indent <= 0;
-	}
-	return true;
-}
-
 // ── KV apply helpers ─────────────────────────────────────
 
-function applyKV(target: Record<string, any>, kv: { key: string; value: string }) {
+function applyKV(target: Record<string, string>, kv: { key: string; value: string }) {
 	target[kv.key] = kv.value;
 }
 
@@ -533,7 +499,7 @@ function applyDividerKV(divider: DividerBlockConfig, kv: { key: string; value: s
 function applySectionKV(section: SectionConfig, kv: { key: string; value: string }) {
 	if (kv.key === "columns" || kv.key === "grid") {
 		const n = parseInt(kv.value, 10);
-		section.columns = (Number.isFinite(n) && n >= 1 && n <= 4 ? n : 2) as 1 | 2 | 3 | 4;
+		section.columns = Number.isFinite(n) && n >= 1 ? n : 2;
 	}
 }
 
@@ -549,8 +515,21 @@ function applyLinksKV(links: LinksConfig, kv: { key: string; value: string }) {
 	if (kv.key === "title") links.title = kv.value;
 	if (kv.key === "columns") {
 		const n = parseInt(kv.value, 10);
-		links.columns = (Number.isFinite(n) && n >= 1 && n <= 4 ? n : 3) as 1 | 2 | 3 | 4;
+		links.columns = Number.isFinite(n) && n >= 1 ? n : 3;
 	}
+}
+
+function applyLinkItemKV(item: Partial<LinkItem>, kv: { key: string; value: string }) {
+	if (kv.key === "url") item.url = kv.value;
+	if (kv.key === "label") item.label = kv.value;
+	if (kv.key === "icon") item.icon = kv.value;
+	if (kv.key === "desc") item.desc = kv.value;
+}
+
+function applyRowKV(row: RowConfig, kv: { key: string; value: string }) {
+	if (kv.key === "proportion") row.proportion = kv.value;
+	if (kv.key === "align") row.align = kv.value as "top" | "center" | "stretch";
+	if (kv.key === "gap") row.gap = kv.value;
 }
 
 function applySearchKV(search: SearchConfig, kv: { key: string; value: string }) {
@@ -569,6 +548,25 @@ function applyRecentlyKV(recently: RecentlyConfig, kv: { key: string; value: str
 	if (kv.key === "tags") {
 		recently.tags = kv.value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
 	}
+}
+
+// ── Recently context detection ───────────────────────────
+
+/** Determine if `recently:` at this line is the root-level boolean form */
+function isRootRecentlyContext(allLines: string[], currentIdx: number): boolean {
+	for (let j = currentIdx + 1; j < allLines.length; j++) {
+		const raw = allLines[j].replace(/\r$/, "");
+		const t = raw.trim();
+		if (t === "" || t.startsWith("#")) continue;
+		const nextIndent = raw.search(/\S/);
+		const currentRaw = allLines[currentIdx].replace(/\r$/, "");
+		const currentIndent = currentRaw.search(/\S/);
+		if (nextIndent > currentIndent && /^(show|count|path|tags):/.test(t)) {
+			return false;
+		}
+		return true;
+	}
+	return true;
 }
 
 // ── Utility ──────────────────────────────────────────────

@@ -1,144 +1,28 @@
 import { App, PluginSettingTab, Setting, Notice, setIcon, Modal } from "obsidian";
 import type NexusDashboardPlugin from "./main";
+import type {
+	NexusSettings,
+	MocEntry,
+	QuickLinkEntry,
+	RowLayoutEntry,
+	TabEntry,
+	StatEntry,
+	DividerDesign,
+} from "./types";
 import { getAvailableFonts, renderFiglet } from "./figlet";
 import { ICONS, SMALL_ICONS } from "./icons";
+import {
+	DEFAULT_SETTINGS,
+	DEFAULT_MOCS,
+	DEFAULT_STATS,
+	DEFAULT_DIVIDER_DESIGN,
+	DIVIDER_PRESETS,
+	DIVIDER_PRESET_NAMES,
+	detectDividerPreset,
+	deepCloneDefaults,
+} from "./defaults";
 
 export const ICON_NAMES = Object.keys(ICONS);
-
-export interface MocEntry {
-	path: string;
-	title: string;
-	desc: string;
-	icon: string;
-}
-
-export interface QuickLinkEntry {
-	label: string;
-	url: string;
-	icon: string;
-}
-
-export interface RowLayoutEntry {
-	name: string;
-	columns: 1 | 2 | 3 | 4;
-	proportion: string;
-	align: "top" | "center" | "stretch";
-}
-
-export interface TabEntry {
-	label: string;
-}
-
-export interface StatEntry {
-	folder: string;
-	label: string;
-}
-
-export interface DividerDesign {
-	gradient: string;
-	lineWidth: string;
-	labelSize: string;
-	labelWeight: string;
-	labelColor: string;
-	labelSpacing: string;
-}
-
-export interface NexusSettings {
-	headerText: string;
-	openOnStartup: boolean;
-	mocs: MocEntry[];
-	stats: StatEntry[];
-	showStats: boolean;
-	showRecently: boolean;
-	showGraph: boolean;
-	recentCount: number;
-	excludeFolders: string[];
-	mocGridColumns: number;
-	miniGridColumns: number;
-	dividerLabel: string;
-	dividerDesign: DividerDesign;
-	asciiDefaultFont: string;
-	asciiDefaultColor: string;
-	asciiDefaultSize: number;
-	asciiMobileSize: number;
-	asciiDefaultAlign: "left" | "center" | "right";
-	showSearch: boolean;
-	searchDefault: "vault" | "cards";
-	recentPath: string;
-	recentTags: string;
-	quickLinks: QuickLinkEntry[];
-	rowSizes: Record<string, string>;
-	rowLayouts: RowLayoutEntry[];
-	tabs: TabEntry[];
-}
-
-export const DEFAULT_MOCS: MocEntry[] = [
-	{ path: "MOC/Journal MOC.md", title: "Journal MOC", desc: "Personal reflections & daily logs", icon: "Journal" },
-	{ path: "MOC/Knowledge MOC.md", title: "Knowledge MOC", desc: "Learning notes & insights", icon: "Knowledge" },
-	{ path: "MOC/Personal MOC.md", title: "Personal MOC", desc: "Goals, habits & self-tracking", icon: "Personal" },
-	{ path: "MOC/Projects MOC.md", title: "Projects MOC", desc: "Active work & side quests", icon: "Project" },
-	{ path: "MOC/Resources MOC.md", title: "Resources MOC", desc: "Tools, references & bookmarks", icon: "Resources" },
-	{ path: "MOC/Tracker Index MOC.md", title: "Tracker Index MOC", desc: "Metrics, streaks & analytics", icon: "Trackers" },
-];
-
-export const DEFAULT_STATS: StatEntry[] = [
-	{ folder: "", label: "Files" },
-	{ folder: "MOC", label: "MOCs" },
-	{ folder: "Project", label: "Projects" },
-	{ folder: "Knowledge/Tasks & Action Management", label: "Tasks" },
-	{ folder: "Journal", label: "Journals" },
-];
-
-export const DEFAULT_DIVIDER_DESIGN: DividerDesign = {
-	gradient: "linear-gradient(90deg, transparent, var(--background-modifier-border), transparent)",
-	lineWidth: "1px",
-	labelSize: "0.7rem",
-	labelWeight: "600",
-	labelColor: "var(--text-muted)",
-	labelSpacing: "0.12em",
-};
-
-export const DEFAULT_SETTINGS: NexusSettings = {
-	headerText: "NEXUS",
-	openOnStartup: false,
-	mocs: DEFAULT_MOCS,
-	stats: DEFAULT_STATS,
-	showStats: true,
-	showRecently: true,
-	showGraph: false,
-	recentCount: 9,
-	excludeFolders: [],
-	mocGridColumns: 2,
-	miniGridColumns: 3,
-	dividerLabel: "Recently Modified",
-	dividerDesign: { ...DEFAULT_DIVIDER_DESIGN },
-	asciiDefaultFont: "ANSI Shadow",
-	asciiDefaultColor: "#8A5CF6",
-	asciiDefaultSize: 1.0,
-	asciiMobileSize: 0.5,
-	asciiDefaultAlign: "center",
-	showSearch: false,
-	searchDefault: "vault",
-	recentPath: "",
-	recentTags: "",
-	quickLinks: [],
-	rowSizes: {},
-	rowLayouts: [],
-	tabs: [],
-};
-
-function deepCloneDefaults(): NexusSettings {
-	return {
-		...DEFAULT_SETTINGS,
-		mocs: DEFAULT_MOCS.map((m) => ({ ...m })),
-		stats: DEFAULT_STATS.map((s) => ({ ...s })),
-		dividerDesign: { ...DEFAULT_SETTINGS.dividerDesign },
-		quickLinks: DEFAULT_SETTINGS.quickLinks.map((l) => ({ ...l })),
-		rowSizes: { ...DEFAULT_SETTINGS.rowSizes },
-		rowLayouts: DEFAULT_SETTINGS.rowLayouts.map((r) => ({ ...r })),
-		tabs: DEFAULT_SETTINGS.tabs.map((t) => ({ ...t })),
-	};
-}
 
 function getVaultFolders(app: App): string[] {
 	const folders = new Set<string>();
@@ -161,68 +45,6 @@ function getVaultFolders(app: App): string[] {
 const SVG = {
 	chevronDown: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>`,
 };
-
-// ── Divider Presets ────────────────────────────────────────────
-
-export const DIVIDER_PRESETS: Record<string, DividerDesign> = {
-	default: { ...DEFAULT_DIVIDER_DESIGN },
-	bold: {
-		gradient: "linear-gradient(90deg, transparent, var(--interactive-accent), transparent)",
-		lineWidth: "2px",
-		labelSize: "0.8rem",
-		labelWeight: "700",
-		labelColor: "var(--interactive-accent)",
-		labelSpacing: "0.16em",
-	},
-	subtle: {
-		gradient: "linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent)",
-		lineWidth: "1px",
-		labelSize: "0.65rem",
-		labelWeight: "500",
-		labelColor: "var(--text-faint)",
-		labelSpacing: "0.08em",
-	},
-	gradient: {
-		gradient: "linear-gradient(90deg, var(--interactive-accent), var(--background-modifier-border), var(--interactive-accent))",
-		lineWidth: "1px",
-		labelSize: "0.7rem",
-		labelWeight: "600",
-		labelColor: "var(--text-muted)",
-		labelSpacing: "0.12em",
-	},
-	dashed: {
-		gradient: "repeating-linear-gradient(90deg, var(--background-modifier-border), var(--background-modifier-border) 4px, transparent 4px, transparent 8px)",
-		lineWidth: "1px",
-		labelSize: "0.7rem",
-		labelWeight: "600",
-		labelColor: "var(--text-muted)",
-		labelSpacing: "0.12em",
-	},
-};
-
-const DIVIDER_PRESET_NAMES: Record<string, string> = {
-	default: "Default",
-	bold: "Bold",
-	subtle: "Subtle",
-	gradient: "Gradient",
-	dashed: "Dashed",
-};
-
-function detectDividerPreset(d: DividerDesign): string {
-	for (const [key, preset] of Object.entries(DIVIDER_PRESETS)) {
-		if (
-			d.gradient === preset.gradient &&
-			d.lineWidth === preset.lineWidth &&
-			d.labelSize === preset.labelSize &&
-			d.labelWeight === preset.labelWeight &&
-			d.labelColor === preset.labelColor &&
-			d.labelSpacing === preset.labelSpacing
-		) {
-			return key;
-		}
-	}
-	return "default";
-}
 
 // ── Confirmation Modal ───────────────────────────────────────
 
@@ -280,6 +102,7 @@ export class NexusSettingTab extends PluginSettingTab {
 	plugin: NexusDashboardPlugin;
 	private draggedIndex: number | null = null;
 	private activeTab = "general";
+	private collapsedCards = new Map<number, boolean>();
 
 	constructor(app: App, plugin: NexusDashboardPlugin) {
 		super(app, plugin);
@@ -623,83 +446,6 @@ export class NexusSettingTab extends PluginSettingTab {
 					})
 			);
 
-		// ── Tabs builder ───────────────────────────────
-		new Setting(containerEl).setHeading().setName("Tabs");
-		containerEl.createEl("p", {
-			text: "Define tabs for the dashboard (empty code block only). Tabs group content behind clickable buttons.",
-			cls: "setting-item-description",
-		});
-
-		const tabs = this.plugin.settings.tabs;
-
-		// Visual tab bar preview
-		if (tabs.length > 0) {
-			const tabPreview = containerEl.createDiv({ cls: "nexus-tabs-preview" });
-			tabPreview.createEl("span", { text: "Preview: ", cls: "nexus-tabs-preview-label" });
-			const tabBar = tabPreview.createDiv({ cls: "nexus-tabs-preview-bar" });
-			for (let i = 0; i < tabs.length; i++) {
-				const tabBtn = tabBar.createEl("button", {
-					cls: `nexus-tabs-preview-btn ${i === 0 ? "active" : ""}`,
-					text: tabs[i].label || `Tab ${i + 1}`,
-				});
-			}
-		}
-
-		// Tab list
-		for (let i = 0; i < tabs.length; i++) {
-			const tab = tabs[i];
-			const setting = new Setting(containerEl);
-			setting.setName(tab.label || `Tab ${i + 1}`);
-			setting.addText((text) =>
-				text
-					.setPlaceholder("Tab label")
-					.setValue(tab.label)
-					.onChange(async (value) => {
-						this.plugin.settings.tabs[i].label = value;
-						await this.plugin.saveSettings();
-					})
-			);
-			setting.addExtraButton((btn) =>
-				btn
-					.setIcon("trash")
-					.setTooltip("Remove tab")
-					.onClick(async () => {
-						this.plugin.settings.tabs.splice(i, 1);
-						await this.plugin.saveSettings();
-						this.display();
-					})
-			);
-		}
-
-		new Setting(containerEl)
-			.setName("Add tab")
-			.setDesc("Add a new tab to the dashboard")
-			.addButton((btn) =>
-				btn
-					.setButtonText("+ Add Tab")
-					.setCta()
-					.onClick(async () => {
-						this.plugin.settings.tabs.push({ label: `Tab ${tabs.length + 1}` });
-						await this.plugin.saveSettings();
-						this.display();
-					})
-			);
-
-		// YAML reference
-		if (tabs.length > 0) {
-			new Setting(containerEl).setHeading().setName("YAML reference");
-			containerEl.createEl("p", {
-				text: "Copy this into your code block to use these tabs:",
-				cls: "setting-item-description",
-			});
-			const yamlLines = [`tabs:`];
-			for (const tab of tabs) {
-				yamlLines.push(`  - label: "${tab.label}"`);
-				yamlLines.push(`    blocks: []`);
-			}
-			const codeEl = containerEl.createEl("pre", { cls: "nexus-settings-code-block" });
-			codeEl.createEl("code", { text: yamlLines.join("\n") });
-		}
 	}
 
 	// ═══════════════════════════════════════════════════════
@@ -811,7 +557,7 @@ export class NexusSettingTab extends PluginSettingTab {
 
 		for (let i = 0; i < cols; i++) {
 			const colEl = preview.createDiv({ cls: "nexus-row-editor-col" });
-			const width = (Number.isFinite(parts[i]) && parts[i]! > 0) ? parts[i]! : Math.floor(100 / cols);
+			const width = (Number.isFinite(parts[i]) && (parts[i] ?? 0) > 0) ? (parts[i] as number) : Math.floor(100 / cols);
 			colEl.style.width = `${width}%`;
 			colEl.createEl("span", { text: `${width}%`, cls: "nexus-row-editor-col-label" });
 		}
@@ -842,8 +588,8 @@ export class NexusSettingTab extends PluginSettingTab {
 				.setValue(layout.columns)
 				.setDynamicTooltip()
 				.onChange(async (value) => {
-					const newCols = value as 1 | 2 | 3 | 4;
-					this.plugin.settings.rowLayouts[index].columns = newCols;
+					const newCols = parseInt(value, 10);
+					this.plugin.settings.rowLayouts[index].columns = Number.isFinite(newCols) && newCols >= 1 ? newCols : 2;
 					// Recalculate proportion to match column count
 					const part = Math.floor(100 / newCols);
 					const newParts: number[] = [];
@@ -1076,22 +822,38 @@ export class NexusSettingTab extends PluginSettingTab {
 			try {
 				const text = await file.text();
 				const data = JSON.parse(text);
-				if (!data || typeof data !== "object" || !Array.isArray(data.mocs) || !Array.isArray(data.stats)) {
-					new Notice("Invalid settings file: missing required fields");
+				if (!data || typeof data !== "object") {
+					new Notice("Invalid settings file: not a valid JSON object");
 					return;
 				}
-				const validMocs = data.mocs.every(
-					(m: any) => m && typeof m.path === "string" && typeof m.title === "string"
-				);
-				const validStats = data.stats.every(
-					(s: any) => s && typeof s.folder === "string" && typeof s.label === "string"
-				);
-				if (!validMocs || !validStats) {
-					new Notice("Invalid settings file: malformed entries");
+				if (data.mocs && !Array.isArray(data.mocs)) {
+					new Notice("Invalid settings file: mocs must be an array");
 					return;
+				}
+				if (data.stats && !Array.isArray(data.stats)) {
+					new Notice("Invalid settings file: stats must be an array");
+					return;
+				}
+				if (data.mocs) {
+					const validMocs = data.mocs.every(
+						(m: Record<string, unknown>) => m && typeof m.path === "string" && typeof m.title === "string"
+					);
+					if (!validMocs) {
+						new Notice("Invalid settings file: malformed MOC entries");
+						return;
+					}
+				}
+				if (data.stats) {
+					const validStats = data.stats.every(
+						(s: Record<string, unknown>) => s && typeof s.folder === "string" && typeof s.label === "string"
+					);
+					if (!validStats) {
+						new Notice("Invalid settings file: malformed stat entries");
+						return;
+					}
 				}
 				const validKeys = Object.keys(DEFAULT_SETTINGS);
-				const filtered: Record<string, any> = {};
+				const filtered: Record<string, unknown> = {};
 				for (const key of validKeys) {
 					if (key in data) {
 						filtered[key] = data[key];
@@ -1111,8 +873,7 @@ export class NexusSettingTab extends PluginSettingTab {
 	// ── MOC Card with drag-and-drop + color picker ────────────
 
 	renderMocCard(containerEl: HTMLElement, moc: MocEntry, index: number): void {
-		const collapsedKey = `nexus_moc_${index}`;
-		const isCollapsed = (this as any)[collapsedKey] !== false;
+		const isCollapsed = this.collapsedCards.get(index) ?? true;
 
 		// Heading bar
 		const heading = containerEl.createDiv({ cls: "nexus-settings-moc-heading" });
@@ -1126,7 +887,7 @@ export class NexusSettingTab extends PluginSettingTab {
 		heading.addEventListener("dragstart", (e) => {
 			this.draggedIndex = index;
 			heading.classList.add("nexus-dragging");
-			e.dataTransfer!.effectAllowed = "move";
+			if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
 		});
 
 		heading.addEventListener("dragend", () => {
@@ -1136,7 +897,7 @@ export class NexusSettingTab extends PluginSettingTab {
 
 		heading.addEventListener("dragover", (e) => {
 			e.preventDefault();
-			e.dataTransfer!.dropEffect = "move";
+			if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
 			heading.classList.add("nexus-drag-over");
 		});
 
@@ -1184,7 +945,7 @@ export class NexusSettingTab extends PluginSettingTab {
 
 		// Toggle collapse
 		heading.addEventListener("click", () => {
-			(this as any)[collapsedKey] = isCollapsed ? false : true;
+			this.collapsedCards.set(index, !isCollapsed);
 			this.display();
 		});
 

@@ -1,4 +1,4 @@
-export type DashboardBlock = DividerBlockConfig | SectionConfig | RecentlyConfig | RowConfig | LinksConfig | TabsConfig;
+export type DashboardBlock = DividerBlockConfig | SectionConfig | RecentlyConfig | RowConfig | StackConfig | LinksConfig;
 
 export interface DashboardConfig {
 	header: HeaderConfig;
@@ -37,8 +37,9 @@ export interface DividerBlockConfig {
 
 export interface SectionConfig {
 	kind: "section";
-	columns: 1 | 2 | 3 | 4;
+	columns: number;
 	cards: CardConfig[];
+	divider?: DividerBlockConfig;
 }
 
 export interface CardConfig {
@@ -72,20 +73,16 @@ export interface RowConfig {
 	kind: "row";
 	columns?: number;
 	proportion?: string;
+	gap?: string;
 	align?: "top" | "center" | "stretch";
-	children: DashboardBlock[];
+	children: (SectionConfig | StackConfig)[];
 }
 
-export interface TabItem {
-	id: string;
-	label: string;
-	blocks: DashboardBlock[];
-}
-
-export interface TabsConfig {
-	kind: "tabs";
-	items: TabItem[];
-	active?: number;
+export interface StackConfig {
+	kind: "stack";
+	spacing?: string;
+	align?: "left" | "center" | "right" | "stretch";
+	children: (SectionConfig | RowConfig)[];
 }
 
 export interface SearchConfig {
@@ -100,4 +97,68 @@ export interface RecentlyConfig {
 	count?: number;
 	path?: string;
 	tags?: string[];
+}
+
+// ── Settings interfaces ───────────────────────────────────────
+
+export interface MocEntry {
+	path: string;
+	title: string;
+	desc: string;
+	icon: string;
+}
+
+export interface QuickLinkEntry {
+	label: string;
+	url: string;
+	icon: string;
+}
+
+export interface RowLayoutEntry {
+	name: string;
+	columns: number;
+	proportion: string;
+	align: "top" | "center" | "stretch";
+}
+
+export interface StatEntry {
+	folder: string;
+	label: string;
+}
+
+export interface DividerDesign {
+	gradient: string;
+	lineWidth: string;
+	labelSize: string;
+	labelWeight: string;
+	labelColor: string;
+	labelSpacing: string;
+}
+
+export interface NexusSettings {
+	headerText: string;
+	openOnStartup: boolean;
+	mocs: MocEntry[];
+	stats: StatEntry[];
+	showStats: boolean;
+	showRecently: boolean;
+	showGraph: boolean;
+	recentCount: number;
+	excludeFolders: string[];
+	mocGridColumns: number;
+	miniGridColumns: number;
+	dividerLabel: string;
+	dividerDesign: DividerDesign;
+	asciiDefaultFont: string;
+	asciiDefaultColor: string;
+	asciiDefaultSize: number;
+	asciiMobileSize: number;
+	asciiDefaultAlign: "left" | "center" | "right";
+	showSearch: boolean;
+	searchDefault: "vault" | "cards";
+	recentPath: string;
+	recentTags: string;
+	quickLinks: QuickLinkEntry[];
+	rowSizes: Record<string, string>;
+	rowLayouts: RowLayoutEntry[];
 }

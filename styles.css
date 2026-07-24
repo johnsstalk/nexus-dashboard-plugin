@@ -365,19 +365,6 @@
   }
 }
 
-/* ── Hidden Graph Links ───────────────────────────────────── */
-.nexus-graph-links,
-.nexus-graph-links * {
-  visibility: hidden !important;
-  position: absolute !important;
-  width: 0 !important;
-  height: 0 !important;
-  overflow: hidden !important;
-  font-size: 0 !important;
-  line-height: 0 !important;
-  pointer-events: none !important;
-}
-
 /* ── Section-Based Dashboard ───────────────────────────────────── */
 
 .nexus-section {
@@ -846,20 +833,35 @@
 }
 
 .nexus-row-col {
-  flex: 0 0 auto;
-  width: var(--nexus-row-width, 50%);
+  flex: 1 1 0;
   min-width: 0;
 }
 
+.nexus-row-col[style*="--nexus-row-width"] {
+  flex: none;
+  width: var(--nexus-row-width);
+}
+
 .nexus-row-divider {
-  width: 4px;
+  width: 8px;
   flex-shrink: 0;
   cursor: col-resize;
-  background: var(--background-modifier-border);
-  border-radius: 2px;
-  margin: 0 2px;
-  transition: background 0.15s ease, transform 0.15s ease;
+  background: transparent;
+  margin: 0;
   position: relative;
+  z-index: 1;
+  transition: background 0.15s ease;
+}
+
+.nexus-row-divider::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 0;
+  height: 0;
+  pointer-events: none;
 }
 
 .nexus-row-divider::after {
@@ -871,61 +873,77 @@
   bottom: 0;
 }
 
-.nexus-row-divider:hover,
+.nexus-row-divider:hover {
+  background: var(--interactive-accent);
+  opacity: 0.25;
+}
+
 .nexus-row-divider.dragging {
   background: var(--interactive-accent);
-  transform: scaleX(1.5);
+  opacity: 0.4;
 }
 
 /* ============================================================
-   Nexus Tabs — Tabbed content panels
+   Nexus Stack — Vertical stacking (Y-axis layout)
+   Always vertical with configurable spacing
    ============================================================ */
 
-.nexus-tabs {
+.nexus-stack {
+  display: flex;
+  flex-direction: column;
   margin-bottom: 1.5rem;
 }
 
-.nexus-tabs-bar {
-  display: flex;
-  gap: 2px;
-  border-bottom: 1px solid var(--background-modifier-border);
-  margin-bottom: 12px;
-  padding: 0 4px;
+.nexus-stack-item {
+  min-width: 0;
 }
 
-.nexus-tab {
-  display: inline-flex;
-  align-items: center;
-  padding: 8px 16px;
+.nexus-stack-item .nexus-section {
+  margin-bottom: 0;
+}
+
+/* Optional horizontal divider between stack items — invisible by default, visible on hover */
+.nexus-stack-divider {
+  width: 100%;
+  height: 8px;
+  flex-shrink: 0;
+  cursor: row-resize;
+  background: transparent;
+  margin: 0;
   border: none;
-  background: none;
-  color: var(--text-muted);
-  font-size: 0.82rem;
-  font-weight: 500;
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  transition: color 0.15s ease, border-color 0.15s ease;
-  font-family: inherit;
+  position: relative;
+  z-index: 1;
+  transition: background 0.15s ease;
 }
 
-.nexus-tab:hover {
-  color: var(--text-normal);
-  background: var(--background-modifier-hover);
-  border-radius: 4px 4px 0 0;
+.nexus-stack-divider::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 0;
+  height: 0;
+  pointer-events: none;
 }
 
-.nexus-tab.active {
-  color: var(--interactive-accent);
-  border-bottom-color: var(--interactive-accent);
+.nexus-stack-divider::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -8px;
+  bottom: -8px;
 }
 
-.nexus-tab-panel {
-  display: none;
+.nexus-stack-divider:hover {
+  background: var(--interactive-accent);
+  opacity: 0.25;
 }
 
-.nexus-tab-panel.active {
-  display: block;
+.nexus-stack-divider.dragging {
+  background: var(--interactive-accent);
+  opacity: 0.4;
 }
 
 /* ============================================================
@@ -1257,51 +1275,6 @@
 }
 
 /* ============================================================
-   Tabs Preview (Settings)
-   ============================================================ */
-
-.nexus-tabs-preview {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 16px;
-  padding: 10px 14px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  background: var(--background-secondary);
-}
-
-.nexus-tabs-preview-label {
-  font-size: 0.78rem;
-  color: var(--text-muted);
-  font-weight: 500;
-  white-space: nowrap;
-}
-
-.nexus-tabs-preview-bar {
-  display: flex;
-  gap: 4px;
-}
-
-.nexus-tabs-preview-btn {
-  padding: 5px 12px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 6px;
-  background: var(--background-primary);
-  color: var(--text-muted);
-  font-size: 0.78rem;
-  font-weight: 500;
-  cursor: default;
-  font-family: inherit;
-}
-
-.nexus-tabs-preview-btn.active {
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-  border-color: var(--interactive-accent);
-}
-
-/* ============================================================
    Code block in settings
    ============================================================ */
 
@@ -1341,11 +1314,6 @@
   .nexus-links-grid--cols-3,
   .nexus-links-grid--cols-4 {
     grid-template-columns: 1fr;
-  }
-
-  .nexus-tabs-bar {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
   }
 
   .nexus-settings-tabs {

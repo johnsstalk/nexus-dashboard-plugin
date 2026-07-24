@@ -1,19 +1,9 @@
-import { Editor, MarkdownView, MarkdownFileInfo, Plugin, Notice, TFile, TAbstractFile, WorkspaceLeaf } from "obsidian";
-import { NexusSettings, DEFAULT_SETTINGS, NexusSettingTab } from "./settings";
+import { Editor, MarkdownView, MarkdownFileInfo, Plugin, Notice, TFile, TAbstractFile } from "obsidian";
+import { NexusSettings } from "./types";
+import { DEFAULT_SETTINGS } from "./defaults";
+import { hasExtension, ensureExtension } from "./utils";
+import { NexusSettingTab } from "./settings";
 import { NexusRenderer } from "./renderer";
-
-
-const DASHBOARD_VIEW_TYPE = "nexus-dashboard-view";
-
-/** Check if a path already has a file extension */
-function hasExtension(path: string): boolean {
-	return /\.\w{1,10}$/.test(path);
-}
-
-/** Auto-append .md to extension-free paths */
-function ensureExtension(path: string): string {
-	return hasExtension(path) ? path : path + ".md";
-}
 
 export default class NexusDashboardPlugin extends Plugin {
 	settings: NexusSettings = DEFAULT_SETTINGS;
@@ -88,7 +78,6 @@ export default class NexusDashboardPlugin extends Plugin {
 		this.registerEvent(
 			this.app.vault.on("rename", (file: TAbstractFile, oldPath: string) => {
 				if (!(file instanceof TFile)) return;
-				// Paths now include extensions — compare full paths
 				const oldPathLower = oldPath.toLowerCase();
 				const newPath = file.path;
 
@@ -99,7 +88,6 @@ export default class NexusDashboardPlugin extends Plugin {
 				this.saveData(this.settings);
 
 				// Update paths inside nexus-dashboard code blocks in all vault notes
-				// Pass original case for code block matching (case-sensitive includes)
 				this.updateCodeBlockPaths(oldPath, newPath);
 			})
 		);
@@ -147,35 +135,42 @@ export default class NexusDashboardPlugin extends Plugin {
 	// ── Settings ───────────────────────────────────────────
 
 	async loadSettings() {
-		const data = await this.loadData();
-		this.settings = {
-			headerText: typeof data?.headerText === "string" ? data.headerText : DEFAULT_SETTINGS.headerText,
-			openOnStartup: typeof data?.openOnStartup === "boolean" ? data.openOnStartup : DEFAULT_SETTINGS.openOnStartup,
-			mocs: data?.mocs && Array.isArray(data.mocs) ? data.mocs.map((m: any) => ({ ...m })) : DEFAULT_SETTINGS.mocs.map((m) => ({ ...m })),
-			stats: data?.stats && Array.isArray(data.stats) ? data.stats.map((s: any) => ({ ...s })) : DEFAULT_SETTINGS.stats.map((s) => ({ ...s })),
-			showStats: typeof data?.showStats === "boolean" ? data.showStats : DEFAULT_SETTINGS.showStats,
-			showRecently: typeof data?.showRecently === "boolean" ? data.showRecently : DEFAULT_SETTINGS.showRecently,
-			showGraph: typeof data?.showGraph === "boolean" ? data.showGraph : DEFAULT_SETTINGS.showGraph,
-			recentCount: typeof data?.recentCount === "number" ? data.recentCount : DEFAULT_SETTINGS.recentCount,
-			excludeFolders: Array.isArray(data?.excludeFolders) ? data.excludeFolders : [],
-			mocGridColumns: typeof data?.mocGridColumns === "number" ? data.mocGridColumns : DEFAULT_SETTINGS.mocGridColumns,
-			miniGridColumns: typeof data?.miniGridColumns === "number" ? data.miniGridColumns : DEFAULT_SETTINGS.miniGridColumns,
-			dividerLabel: typeof data?.dividerLabel === "string" ? data.dividerLabel : DEFAULT_SETTINGS.dividerLabel,
-			dividerDesign: data?.dividerDesign && typeof data.dividerDesign === "object" ? { ...DEFAULT_SETTINGS.dividerDesign, ...data.dividerDesign } : { ...DEFAULT_SETTINGS.dividerDesign },
-			asciiDefaultFont: typeof data?.asciiDefaultFont === "string" ? data.asciiDefaultFont : DEFAULT_SETTINGS.asciiDefaultFont,
-			asciiDefaultColor: typeof data?.asciiDefaultColor === "string" ? data.asciiDefaultColor : DEFAULT_SETTINGS.asciiDefaultColor,
-			asciiDefaultSize: typeof data?.asciiDefaultSize === "number" ? data.asciiDefaultSize : DEFAULT_SETTINGS.asciiDefaultSize,
-			asciiMobileSize: typeof data?.asciiMobileSize === "number" ? data.asciiMobileSize : DEFAULT_SETTINGS.asciiMobileSize,
-			asciiDefaultAlign: typeof data?.asciiDefaultAlign === "string" ? data.asciiDefaultAlign : DEFAULT_SETTINGS.asciiDefaultAlign,
-			showSearch: typeof data?.showSearch === "boolean" ? data.showSearch : DEFAULT_SETTINGS.showSearch,
-			searchDefault: typeof data?.searchDefault === "string" ? data.searchDefault : DEFAULT_SETTINGS.searchDefault,
-			recentPath: typeof data?.recentPath === "string" ? data.recentPath : DEFAULT_SETTINGS.recentPath,
-			recentTags: typeof data?.recentTags === "string" ? data.recentTags : DEFAULT_SETTINGS.recentTags,
-			quickLinks: data?.quickLinks && Array.isArray(data.quickLinks) ? data.quickLinks.map((l: any) => ({ ...l })) : DEFAULT_SETTINGS.quickLinks.map((l) => ({ ...l })),
-			rowSizes: data?.rowSizes && typeof data.rowSizes === "object" ? { ...data.rowSizes } : {},
-			rowLayouts: data?.rowLayouts && Array.isArray(data.rowLayouts) ? data.rowLayouts.map((r: any) => ({ ...r })) : [],
-			tabs: data?.tabs && Array.isArray(data.tabs) ? data.tabs.map((t: any) => ({ ...t })) : [],
+		try {
+			const data = await this.loadData();
+			this.settings = {
+				headerText: typeof data?.headerText === "string" ? data.headerText : DEFAULT_SETTINGS.headerText,
+				openOnStartup: typeof data?.openOnStartup === "boolean" ? data.openOnStartup : DEFAULT_SETTINGS.openOnStartup,
+				mocs: data?.mocs && Array.isArray(data.mocs) ? data.mocs.map((m: Record<string, unknown>) => ({ ...m })) : DEFAULT_SETTINGS.mocs.map((m) => ({ ...m })),
+				stats: data?.stats && Array.isArray(data.stats) ? data.stats.map((s: Record<string, unknown>) => ({ ...s })) : DEFAULT_SETTINGS.stats.map((s) => ({ ...s })),
+				showStats: typeof data?.showStats === "boolean" ? data.showStats : DEFAULT_SETTINGS.showStats,
+				showRecently: typeof data?.showRecently === "boolean" ? data.showRecently : DEFAULT_SETTINGS.showRecently,
+				showGraph: typeof data?.showGraph === "boolean" ? data.showGraph : DEFAULT_SETTINGS.showGraph,
+				recentCount: typeof data?.recentCount === "number" ? data.recentCount : DEFAULT_SETTINGS.recentCount,
+				excludeFolders: Array.isArray(data?.excludeFolders)
+					? data.excludeFolders
+					: typeof data?.excludeFolders === "string"
+						? data.excludeFolders.split(",").map((s: string) => s.trim()).filter((s: string) => s.length > 0)
+						: [],
+				mocGridColumns: typeof data?.mocGridColumns === "number" ? data.mocGridColumns : DEFAULT_SETTINGS.mocGridColumns,
+				miniGridColumns: typeof data?.miniGridColumns === "number" ? data.miniGridColumns : DEFAULT_SETTINGS.miniGridColumns,
+				dividerLabel: typeof data?.dividerLabel === "string" ? data.dividerLabel : DEFAULT_SETTINGS.dividerLabel,
+				dividerDesign: data?.dividerDesign && typeof data.dividerDesign === "object" ? { ...DEFAULT_SETTINGS.dividerDesign, ...data.dividerDesign } : { ...DEFAULT_SETTINGS.dividerDesign },
+				asciiDefaultFont: typeof data?.asciiDefaultFont === "string" ? data.asciiDefaultFont : DEFAULT_SETTINGS.asciiDefaultFont,
+				asciiDefaultColor: typeof data?.asciiDefaultColor === "string" ? data.asciiDefaultColor : DEFAULT_SETTINGS.asciiDefaultColor,
+				asciiDefaultSize: typeof data?.asciiDefaultSize === "number" ? data.asciiDefaultSize : DEFAULT_SETTINGS.asciiDefaultSize,
+				asciiMobileSize: typeof data?.asciiMobileSize === "number" ? data.asciiMobileSize : DEFAULT_SETTINGS.asciiMobileSize,
+				asciiDefaultAlign: typeof data?.asciiDefaultAlign === "string" ? data.asciiDefaultAlign : DEFAULT_SETTINGS.asciiDefaultAlign,
+				showSearch: typeof data?.showSearch === "boolean" ? data.showSearch : DEFAULT_SETTINGS.showSearch,
+				searchDefault: typeof data?.searchDefault === "string" ? data.searchDefault : DEFAULT_SETTINGS.searchDefault,
+				recentPath: typeof data?.recentPath === "string" ? data.recentPath : DEFAULT_SETTINGS.recentPath,
+				recentTags: typeof data?.recentTags === "string" ? data.recentTags : DEFAULT_SETTINGS.recentTags,
+				quickLinks: data?.quickLinks && Array.isArray(data.quickLinks) ? data.quickLinks.map((l: Record<string, unknown>) => ({ ...l })) : DEFAULT_SETTINGS.quickLinks.map((l) => ({ ...l })),
+				rowSizes: data?.rowSizes && typeof data.rowSizes === "object" ? { ...data.rowSizes } : {},
+			rowLayouts: data?.rowLayouts && Array.isArray(data.rowLayouts) ? data.rowLayouts.map((r: Record<string, unknown>) => ({ ...r })) : [],
 		};
+		} catch {
+			this.settings = { ...DEFAULT_SETTINGS };
+		}
 	}
 
 	async saveSettings() {
@@ -194,7 +189,6 @@ export default class NexusDashboardPlugin extends Plugin {
 	// ── Update paths inside code blocks on file rename ────
 
 	private async updateCodeBlockPaths(oldPath: string, newPath: string): Promise<void> {
-		// oldPath/newPath are full paths with extensions (e.g. "MOC/Journal MOC.md")
 		const ext = oldPath.match(/\.\w{1,10}$/)?.[0] || ".md";
 		const oldPathNoExt = oldPath.replace(new RegExp(ext.replace(".", "\\.") + "$"), "");
 
@@ -211,10 +205,8 @@ export default class NexusDashboardPlugin extends Plugin {
 			let updated = content;
 
 			if (hasOldFormat) {
-				// Migrate: old extension-free → new with extension
 				updated = updated.replaceAll(oldPathNoExt, newPath);
 			} else {
-				// Already has extension — normal replace
 				updated = updated.replaceAll(oldPath, newPath);
 			}
 
@@ -235,5 +227,4 @@ export default class NexusDashboardPlugin extends Plugin {
 		}
 		this.rerenderDashboards();
 	}
-
 }
