@@ -1,4 +1,6 @@
-export type DashboardBlock = DividerBlockConfig | SectionConfig | RecentlyConfig | RowConfig | StackConfig | LinksConfig;
+export type DashboardBlock = DividerBlockConfig | SectionConfig | RecentlyConfig | VaultListConfig | RowConfig | ColumnConfig | LinksConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig;
+
+export type ContentSlotType = "stats" | "search" | "heading" | "moc-cards" | "quick-links" | "recently" | "vaultlist" | "divider" | "none";
 
 export interface DashboardConfig {
 	header: HeaderConfig;
@@ -75,14 +77,14 @@ export interface RowConfig {
 	proportion?: string;
 	gap?: string;
 	align?: "top" | "center" | "stretch";
-	children: (SectionConfig | StackConfig)[];
+	children: (SectionConfig | ColumnConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | VaultListConfig)[];
 }
 
-export interface StackConfig {
-	kind: "stack";
+export interface ColumnConfig {
+	kind: "column";
 	spacing?: string;
 	align?: "left" | "center" | "right" | "stretch";
-	children: (SectionConfig | RowConfig)[];
+	children: (SectionConfig | RowConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | VaultListConfig)[];
 }
 
 export interface SearchConfig {
@@ -91,12 +93,43 @@ export interface SearchConfig {
 	placeholder?: string;
 }
 
+export interface StatsBlockConfig {
+	kind: "stats";
+	config: StatsConfig;
+}
+
+export interface SearchBlockConfig {
+	kind: "search";
+	config: SearchConfig;
+}
+
+export interface HeadingConfig {
+	text: string;
+	color?: string;
+	align?: "left" | "center" | "right";
+	size?: "small" | "medium" | "large";
+}
+
+export interface HeadingBlockConfig {
+	kind: "heading";
+	config: HeadingConfig;
+}
+
 export interface RecentlyConfig {
 	kind: "recently";
 	show: boolean;
 	count?: number;
 	path?: string;
 	tags?: string[];
+}
+
+export interface VaultListConfig {
+	kind: "vaultlist";
+	show: boolean;
+	count?: number;
+	path?: string;
+	tags?: string[];
+	showDivider?: boolean;
 }
 
 // ── Settings interfaces ───────────────────────────────────────
@@ -114,11 +147,32 @@ export interface QuickLinkEntry {
 	icon: string;
 }
 
+export interface VaultListEntry {
+	name: string;
+	path: string;
+	tags: string;
+	count: number;
+	showDivider: boolean;
+}
+
 export interface RowLayoutEntry {
 	name: string;
 	columns: number;
 	proportion: string;
 	align: "top" | "center" | "stretch";
+	slots: (ContentSlotType | ContentSlotType[])[];
+	slotHeadings?: Record<string, HeadingConfig>;
+	vaultListSlots?: Record<string, string>;
+	dividerSlots?: Record<string, string>;
+}
+
+export interface ColumnLayoutEntry {
+	name: string;
+	spacing: string;
+	align: "left" | "center" | "right" | "stretch";
+	slots: ContentSlotType[];
+	vaultListSlots?: Record<string, string>;
+	dividerSlots?: Record<string, string>;
 }
 
 export interface StatEntry {
@@ -161,4 +215,11 @@ export interface NexusSettings {
 	quickLinks: QuickLinkEntry[];
 	rowSizes: Record<string, string>;
 	rowLayouts: RowLayoutEntry[];
+	columnLayouts: ColumnLayoutEntry[];
+	vaultLists: VaultListEntry[];
+	showQuickLinksDivider: boolean;
+	quickLinksDividerLabel: string;
+	showHeader: boolean;
+	showMocCards: boolean;
+	showQuickLinks: boolean;
 }

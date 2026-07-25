@@ -3,8 +3,6 @@ import type {
 	MocEntry,
 	StatEntry,
 	DividerDesign,
-	QuickLinkEntry,
-	RowLayoutEntry,
 } from "./types";
 
 export const DEFAULT_MOCS: MocEntry[] = [
@@ -57,8 +55,15 @@ export const DEFAULT_SETTINGS: NexusSettings = {
 	recentPath: "",
 	recentTags: "",
 	quickLinks: [],
+	vaultLists: [],
 	rowSizes: {},
 	rowLayouts: [],
+	columnLayouts: [],
+	showQuickLinksDivider: false,
+	quickLinksDividerLabel: "Quick Links",
+	showHeader: true,
+	showMocCards: true,
+	showQuickLinks: false,
 };
 
 export function deepCloneDefaults(): NexusSettings {
@@ -68,8 +73,10 @@ export function deepCloneDefaults(): NexusSettings {
 		stats: DEFAULT_STATS.map((s) => ({ ...s })),
 		dividerDesign: { ...DEFAULT_SETTINGS.dividerDesign },
 		quickLinks: DEFAULT_SETTINGS.quickLinks.map((l) => ({ ...l })),
+		vaultLists: DEFAULT_SETTINGS.vaultLists.map((v) => ({ ...v })),
 		rowSizes: { ...DEFAULT_SETTINGS.rowSizes },
-		rowLayouts: DEFAULT_SETTINGS.rowLayouts.map((r) => ({ ...r })),
+		rowLayouts: DEFAULT_SETTINGS.rowLayouts.map((r) => ({ ...r, slots: [...r.slots] })),
+		columnLayouts: DEFAULT_SETTINGS.columnLayouts.map((s) => ({ ...s, slots: [...s.slots] })),
 	};
 }
 

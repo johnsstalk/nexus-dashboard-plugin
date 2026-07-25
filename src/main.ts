@@ -165,8 +165,15 @@ export default class NexusDashboardPlugin extends Plugin {
 				recentPath: typeof data?.recentPath === "string" ? data.recentPath : DEFAULT_SETTINGS.recentPath,
 				recentTags: typeof data?.recentTags === "string" ? data.recentTags : DEFAULT_SETTINGS.recentTags,
 				quickLinks: data?.quickLinks && Array.isArray(data.quickLinks) ? data.quickLinks.map((l: Record<string, unknown>) => ({ ...l })) : DEFAULT_SETTINGS.quickLinks.map((l) => ({ ...l })),
-				rowSizes: data?.rowSizes && typeof data.rowSizes === "object" ? { ...data.rowSizes } : {},
+				vaultLists: data?.vaultLists && Array.isArray(data.vaultLists) ? data.vaultLists.map((v: Record<string, unknown>) => ({ ...v })) : DEFAULT_SETTINGS.vaultLists.map((v) => ({ ...v })),
+			rowSizes: data?.rowSizes && typeof data.rowSizes === "object" ? { ...data.rowSizes } : {},
 			rowLayouts: data?.rowLayouts && Array.isArray(data.rowLayouts) ? data.rowLayouts.map((r: Record<string, unknown>) => ({ ...r })) : [],
+			columnLayouts: data?.columnLayouts && Array.isArray(data.columnLayouts) ? data.columnLayouts.map((s: Record<string, unknown>) => ({ ...s })) : [],
+			showQuickLinksDivider: typeof data?.showQuickLinksDivider === "boolean" ? data.showQuickLinksDivider : DEFAULT_SETTINGS.showQuickLinksDivider,
+			quickLinksDividerLabel: typeof data?.quickLinksDividerLabel === "string" ? data.quickLinksDividerLabel : DEFAULT_SETTINGS.quickLinksDividerLabel,
+			showHeader: typeof data?.showHeader === "boolean" ? data.showHeader : DEFAULT_SETTINGS.showHeader,
+			showMocCards: typeof data?.showMocCards === "boolean" ? data.showMocCards : DEFAULT_SETTINGS.showMocCards,
+			showQuickLinks: typeof data?.showQuickLinks === "boolean" ? data.showQuickLinks : DEFAULT_SETTINGS.showQuickLinks,
 		};
 		} catch {
 			this.settings = { ...DEFAULT_SETTINGS };

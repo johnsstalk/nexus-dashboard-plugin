@@ -6,8 +6,9 @@ import {
 	LinksConfig,
 	LinkItem,
 	RowConfig,
-	StackConfig,
+	ColumnConfig,
 	RecentlyConfig,
+	VaultListConfig,
 	SearchConfig,
 } from "./types";
 import { ensureExtension as ensureExt } from "./utils";
@@ -31,7 +32,7 @@ function finalizeLinkItem(partial: Partial<LinkItem>): LinkItem {
 	};
 }
 
-type ParseContext = "root" | "header" | "stats" | "divider" | "section" | "cards" | "graph" | "links" | "row" | "stack" | "search" | "recently" | "section-divider";
+type ParseContext = "root" | "header" | "stats" | "divider" | "section" | "cards" | "graph" | "links" | "row" | "column" | "search" | "recently" | "vaultlist" | "section-divider";
 
 export function parseDashboard(raw: string): DashboardConfig {
 	const trimmed = raw.trim();
@@ -56,11 +57,12 @@ export function parseDashboard(raw: string): DashboardConfig {
 	let currentLinkItem: Partial<LinkItem> | null = null;
 	let currentRow: RowConfig | null = null;
 	let currentRowSectionsRemaining: number = 0;
-	let currentStack: StackConfig | null = null;
-	let stackInsideRow = false;
-	let stackIndent = -1;
+	let currentColumn: ColumnConfig | null = null;
+	let columnInsideRow = false;
+	let columnIndent = -1;
 	let currentSearch: SearchConfig | null = null;
 	let currentRecently: RecentlyConfig | null = null;
+	let currentVaultList: VaultListConfig | null = null;
 
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i].replace(/\r$/, "");
@@ -71,7 +73,7 @@ export function parseDashboard(raw: string): DashboardConfig {
 		// Strip YAML list prefix for known keywords (e.g. "- section:" → "section:")
 		if (t.startsWith("- ")) {
 			const stripped = t.slice(2);
-			if (/^(header|stats|graph|divider|section|links|row|stack|search|recently):/.test(stripped)) {
+			if (/^(header|stats|graph|divider|section|links|row|column|search|recently|vaultlist):/.test(stripped)) {
 				t = stripped;
 			}
 		}
@@ -79,13 +81,13 @@ export function parseDashboard(raw: string): DashboardConfig {
 		// ── Context switches ──────────────────────────────
 		if (t === "header:") {
 			flushCurrent();
-			flushStack();
+			flushColumn();
 			context = "header";
 			continue;
 		}
 		if (t.startsWith("stats:") && t.length > 6) {
 			flushCurrent();
-			flushStack();
+			flushColumn();
 			const val = t.slice(6).trim();
 			config.stats.enabled = val === "true";
 			context = "stats";
@@ -93,13 +95,13 @@ export function parseDashboard(raw: string): DashboardConfig {
 		}
 		if (t === "stats:") {
 			flushCurrent();
-			flushStack();
+			flushColumn();
 			context = "stats";
 			continue;
 		}
 		if (t === "graph:") {
 			flushCurrent();
-			flushStack();
+			flushColumn();
 			context = "graph";
 			continue;
 		}
@@ -108,33 +110,35 @@ export function parseDashboard(raw: string): DashboardConfig {
 				if (currentSection && currentSection.divider) {
 					// Already has a divider — flush section first, create standalone divider
 					flushCurrent();
-					flushStack();
+					flushColumn();
 					context = "divider";
 					currentDivider = { kind: "divider", title: "", type: undefined };
 					continue;
 				}
-				// First divider for this section — attach it
+		// First divider for this section — attach it
+			if (currentSection) {
 				currentSection.divider = { kind: "divider", title: "", type: undefined };
-				context = "section-divider";
+			}
+			context = "section-divider";
 				continue;
 			}
 			flushCurrent();
-			flushStack();
+			flushColumn();
 			context = "divider";
 			currentDivider = { kind: "divider", title: "", type: undefined };
 			continue;
 		}
 
-		// ── Section inside stack (before root section:) ───
-		if (t === "section:" && context === "stack") {
+		// ── Section inside column (before root section:) ───
+		if (t === "section:" && context === "column") {
 			flushCard();
 			currentSection = { kind: "section", columns: 2, cards: [] };
 			context = "section";
 			continue;
 		}
 
-		// ── Row inside stack (nested, before root row:) ───
-		if (t === "row:" && context === "stack") {
+		// ── Row inside column (nested, before root row:) ───
+		if (t === "row:" && context === "column") {
 			flushCard();
 			flushSection();
 			context = "row";
@@ -151,8 +155,8 @@ export function parseDashboard(raw: string): DashboardConfig {
 				currentDivider = null;
 			}
 			flushCurrent();
-			if (stackInsideRow && currentRow && currentStack && currentStack.children.length > 0 && indent <= stackIndent) {
-				flushStack();
+			if (columnInsideRow && currentRow && currentColumn && currentColumn.children.length > 0 && indent <= columnIndent) {
+				flushColumn();
 			}
 			context = "section";
 			currentSection = { kind: "section", columns: 2, cards: [] };
@@ -162,7 +166,7 @@ export function parseDashboard(raw: string): DashboardConfig {
 			continue;
 		}
 		if (t === "cards:") {
-			if (context !== "tab-section") {
+			if (context !== "section") {
 				context = "cards";
 			}
 			continue;
@@ -175,7 +179,7 @@ export function parseDashboard(raw: string): DashboardConfig {
 				currentDivider = null;
 			}
 			flushCurrent();
-			flushStack();
+			flushColumn();
 			context = "links";
 			currentLinks = { kind: "links", items: [] };
 			if (pendingDivider) {
@@ -187,37 +191,37 @@ export function parseDashboard(raw: string): DashboardConfig {
 		// ── Row marker ──────────────────────────────────
 		if (t === "row:") {
 			flushCurrent();
-			flushStack();
+			flushColumn();
 			context = "row";
 			currentRow = { kind: "row", children: [] };
 			currentRowSectionsRemaining = 2; // default, overridden by columns:
 			continue;
 		}
 
-		// ── Stack inside row (nested, before root stack:) ───
-		if (t === "stack:" && context === "row") {
+		// ── Column inside row (nested, before root column:) ───
+		if (t === "column:" && context === "row") {
 			flushCard();
 			flushSection();
-			stackInsideRow = true;
-			stackIndent = indent;
+			columnInsideRow = true;
+			columnIndent = indent;
 			currentRowSectionsRemaining--;
-			context = "stack";
-			currentStack = { kind: "stack", children: [] };
+			context = "column";
+			currentColumn = { kind: "column", children: [] };
 				continue;
 		}
 
-		// ── Stack marker ────────────────────────────────
-		if (t === "stack:") {
+		// ── Column marker ────────────────────────────────
+		if (t === "column:") {
 			flushCurrent();
-			flushStack();
-			// If still inside a row (multiple stacks in a row), maintain row context
+			flushColumn();
+			// If still inside a row (multiple columns in a row), maintain row context
 			if (currentRow && currentRowSectionsRemaining > 0) {
-				stackInsideRow = true;
-				stackIndent = indent;
+				columnInsideRow = true;
+				columnIndent = indent;
 				currentRowSectionsRemaining--;
 			}
-			context = "stack";
-			currentStack = { kind: "stack", children: [] };
+			context = "column";
+			currentColumn = { kind: "column", children: [] };
 			continue;
 		}
 
@@ -226,16 +230,23 @@ export function parseDashboard(raw: string): DashboardConfig {
 		// ── Search block ────────────────────────────────
 		if (t === "search:") {
 			flushCurrent();
-			flushStack();
+			flushColumn();
 			context = "search";
 			currentSearch = { show: true };
 			continue;
 		}
 		if (t === "recently:" && !isRootRecentlyContext(lines, i)) {
 			flushCurrent();
-			flushStack();
+			flushColumn();
 			context = "recently";
 			currentRecently = { kind: "recently", show: true };
+			continue;
+		}
+		if (t === "vaultlist:") {
+			flushCurrent();
+			flushColumn();
+			context = "vaultlist";
+			currentVaultList = { kind: "vaultlist", show: true };
 			continue;
 		}
 
@@ -286,7 +297,7 @@ export function parseDashboard(raw: string): DashboardConfig {
 				const n = Number(kv.value);
 				config.header.mobileSize = Number.isFinite(n) && n > 0 ? n : undefined;
 			} else {
-				applyKV(config.header, kv);
+				(config.header as Record<string, string | number | boolean | undefined>)[kv.key] = kv.value;
 			}
 				break;
 			case "stats":
@@ -335,28 +346,28 @@ export function parseDashboard(raw: string): DashboardConfig {
 					}
 				}
 				break;
-		case "stack":
-			if (currentStack) {
-				if (kv.key === "spacing") currentStack.spacing = kv.value;
-				if (kv.key === "align") currentStack.align = kv.value as "left" | "center" | "right" | "stretch";
+		case "column":
+			if (currentColumn) {
+				if (kv.key === "spacing") currentColumn.spacing = kv.value;
+				if (kv.key === "align") currentColumn.align = kv.value as "left" | "center" | "right" | "stretch";
 
 			}
 			break;
-			case "row-card":
-				if (currentCard) applyCardKV(currentCard, kv);
-				break;
 			case "search":
 				if (currentSearch) applySearchKV(currentSearch, kv);
 				break;
 			case "recently":
 				if (currentRecently) applyRecentlyKV(currentRecently, kv);
 				break;
+			case "vaultlist":
+				if (currentVaultList) applyVaultListKV(currentVaultList, kv);
+				break;
 		}
 	}
 
 	// Flush trailing block
 	flushCurrent();
-	flushStack();
+	flushColumn();
 	flushRow();
 
 	return config;
@@ -369,6 +380,7 @@ export function parseDashboard(raw: string): DashboardConfig {
 		flushDivider();
 		flushSearch();
 		flushRecently();
+		flushVaultList();
 	}
 
 	function flushCard() {
@@ -398,8 +410,8 @@ export function parseDashboard(raw: string): DashboardConfig {
 	function flushSection() {
 		flushCard();
 		if (currentSection) {
-			if (currentStack) {
-				currentStack.children.push(currentSection);
+			if (currentColumn) {
+				currentColumn.children.push(currentSection);
 			} else if (currentRow && currentRowSectionsRemaining > 0) {
 				currentRow.children.push(currentSection);
 				currentRowSectionsRemaining--;
@@ -412,8 +424,8 @@ export function parseDashboard(raw: string): DashboardConfig {
 			currentSection = null;
 		} else if (currentCard) {
 			const implicitSection: SectionConfig = { kind: "section", columns: 2, cards: [finalizeCard(currentCard)] };
-			if (currentStack) {
-				currentStack.children.push(implicitSection);
+			if (currentColumn) {
+				currentColumn.children.push(implicitSection);
 			} else if (currentRow && currentRowSectionsRemaining > 0) {
 				currentRow.children.push(implicitSection);
 				currentRowSectionsRemaining--;
@@ -437,8 +449,8 @@ export function parseDashboard(raw: string): DashboardConfig {
 	function flushRow() {
 		if (currentRow) {
 			if (currentRow.children.length > 0) {
-				if (currentStack) {
-					currentStack.children.push(currentRow);
+				if (currentColumn) {
+					currentColumn.children.push(currentRow);
 				} else {
 					config.blocks.push(currentRow);
 				}
@@ -448,24 +460,24 @@ export function parseDashboard(raw: string): DashboardConfig {
 		}
 	}
 
-	function flushStack() {
-		if (currentStack) {
+	function flushColumn() {
+		if (currentColumn) {
 			flushSection();
-			if (currentStack.children.length > 0) {
-				if (stackInsideRow && currentRow) {
-					currentRow.children.push(currentStack);
-					currentStack = null;
+			if (currentColumn.children.length > 0) {
+				if (columnInsideRow && currentRow) {
+					currentRow.children.push(currentColumn);
+					currentColumn = null;
 					if (currentRowSectionsRemaining === 0) {
 						flushRow();
 					}
 				} else {
-					config.blocks.push(currentStack);
+					config.blocks.push(currentColumn);
 				}
 			}
-			if (currentStack) {
-				currentStack = null;
-				stackInsideRow = false;
-				stackIndent = -1;
+			if (currentColumn) {
+				currentColumn = null;
+				columnInsideRow = false;
+				columnIndent = -1;
 			}
 		}
 	}
@@ -483,13 +495,16 @@ export function parseDashboard(raw: string): DashboardConfig {
 			currentRecently = null;
 		}
 	}
+
+	function flushVaultList() {
+		if (currentVaultList) {
+			config.blocks.push(currentVaultList);
+			currentVaultList = null;
+		}
+	}
 }
 
 // ── KV apply helpers ─────────────────────────────────────
-
-function applyKV(target: Record<string, string>, kv: { key: string; value: string }) {
-	target[kv.key] = kv.value;
-}
 
 function applyDividerKV(divider: DividerBlockConfig, kv: { key: string; value: string }) {
 	if (kv.key === "title") divider.title = kv.value;
@@ -547,6 +562,18 @@ function applyRecentlyKV(recently: RecentlyConfig, kv: { key: string; value: str
 	if (kv.key === "path") recently.path = kv.value;
 	if (kv.key === "tags") {
 		recently.tags = kv.value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+	}
+}
+
+function applyVaultListKV(vaultList: VaultListConfig, kv: { key: string; value: string }) {
+	if (kv.key === "show") vaultList.show = kv.value === "true";
+	if (kv.key === "count") {
+		const n = parseInt(kv.value, 10);
+		vaultList.count = Number.isFinite(n) && n > 0 ? n : undefined;
+	}
+	if (kv.key === "path") vaultList.path = kv.value;
+	if (kv.key === "tags") {
+		vaultList.tags = kv.value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
 	}
 }
 

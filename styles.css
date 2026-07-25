@@ -1,4 +1,37 @@
 /* ============================================================
+   Nexus Heading — ASCII art section heading (FIGlet)
+   ============================================================ */
+
+.nexus-heading-wrapper {
+  overflow-x: hidden;
+  padding: 4px 0;
+}
+
+.nexus-heading-wrapper[data-align="left"] {
+  text-align: left;
+}
+
+.nexus-heading-wrapper[data-align="center"] {
+  text-align: center;
+}
+
+.nexus-heading-wrapper[data-align="right"] {
+  text-align: right;
+}
+
+.nexus-heading-output {
+  font-family: "JetBrains Mono NL", "Fira Code", "Cascadia Code", monospace;
+  font-size: calc(var(--nexus-heading-size, 0.6) * 1em) !important;
+  line-height: 1 !important;
+  white-space: pre;
+  margin: 0;
+  padding: 4px 0;
+  overflow-x: auto;
+  background: transparent !important;
+  border: none !important;
+}
+
+/* ============================================================
    Nexus Stats — Single-line card-style counters
    ============================================================ */
 
@@ -7,7 +40,7 @@
   justify-content: center;
   align-items: center;
   gap: 10px;
-  padding: 16px 0 28px 0;
+  padding: 4px 0 8px 0;
   flex-wrap: nowrap;
 }
 
@@ -371,11 +404,19 @@
   margin-bottom: 1.5rem;
 }
 
+.nexus-row .nexus-section {
+  margin-bottom: 0;
+}
+
+.nexus-column .nexus-section {
+  margin-bottom: 0;
+}
+
 .nexus-section-divider {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  margin: 1.5rem 0 0.75rem 0;
+  margin: 0.5rem 0;
 }
 
 .nexus-section-divider-line {
@@ -479,13 +520,6 @@
   border: none !important;
 }
 
-.ascii-header-hint {
-  padding: 8px;
-  color: var(--text-muted);
-  font-style: italic;
-  font-size: 0.85em;
-}
-
 /* ============================================================
    Settings UI — Clean & Minimal
    ============================================================ */
@@ -545,42 +579,6 @@
   align-items: center;
   gap: 2px;
   flex-shrink: 0;
-}
-
-.nexus-settings-moc-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 4px;
-  border: none;
-  background: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  padding: 0;
-  transition: color 0.12s ease, background 0.12s ease;
-}
-
-.nexus-settings-moc-btn:hover {
-  color: var(--text-normal);
-  background: var(--background-modifier-hover);
-}
-
-.nexus-settings-moc-btn:disabled {
-  color: var(--text-faint);
-  cursor: default;
-  opacity: 0.35;
-}
-
-.nexus-settings-moc-btn:disabled:hover {
-  background: none;
-  color: var(--text-faint);
-}
-
-.nexus-settings-moc-btn svg {
-  width: 12px;
-  height: 12px;
 }
 
 .nexus-settings-moc-btn--delete {
@@ -828,7 +826,7 @@
   display: flex;
   align-items: stretch;
   gap: 0;
-  margin-bottom: 1.5rem;
+  margin-bottom: 0;
   min-height: 0;
 }
 
@@ -884,26 +882,30 @@
 }
 
 /* ============================================================
-   Nexus Stack — Vertical stacking (Y-axis layout)
+   Nexus Column — Vertical stacking (Y-axis layout)
    Always vertical with configurable spacing
    ============================================================ */
 
-.nexus-stack {
+.nexus-column {
   display: flex;
   flex-direction: column;
   margin-bottom: 1.5rem;
 }
 
-.nexus-stack-item {
-  min-width: 0;
-}
-
-.nexus-stack-item .nexus-section {
+.nexus-row .nexus-column {
   margin-bottom: 0;
 }
 
-/* Optional horizontal divider between stack items — invisible by default, visible on hover */
-.nexus-stack-divider {
+.nexus-column-item {
+  min-width: 0;
+}
+
+.nexus-column-item .nexus-section {
+  margin-bottom: 0;
+}
+
+/* Optional horizontal divider between column items — invisible by default, visible on hover */
+.nexus-column-divider {
   width: 100%;
   height: 8px;
   flex-shrink: 0;
@@ -916,7 +918,7 @@
   transition: background 0.15s ease;
 }
 
-.nexus-stack-divider::before {
+.nexus-column-divider::before {
   content: '';
   position: absolute;
   top: 50%;
@@ -927,7 +929,7 @@
   pointer-events: none;
 }
 
-.nexus-stack-divider::after {
+.nexus-column-divider::after {
   content: '';
   position: absolute;
   left: 0;
@@ -936,12 +938,12 @@
   bottom: -8px;
 }
 
-.nexus-stack-divider:hover {
+.nexus-column-divider:hover {
   background: var(--interactive-accent);
   opacity: 0.25;
 }
 
-.nexus-stack-divider.dragging {
+.nexus-column-divider.dragging {
   background: var(--interactive-accent);
   opacity: 0.4;
 }
@@ -1116,10 +1118,10 @@
 
 .nexus-settings-tabs {
   display: flex;
+  gap: 4px;
   border-bottom: 2px solid var(--background-modifier-border);
   margin-bottom: 24px;
   padding: 0 8px;
-  overflow-x: auto;
 }
 
 .nexus-settings-tab {
@@ -1165,44 +1167,6 @@
    Row Editor
    ============================================================ */
 
-.nexus-row-editor-preview-section {
-  margin-bottom: 24px;
-}
-
-.nexus-row-editor-section-title {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--text-normal);
-  margin-bottom: 12px;
-}
-
-.nexus-row-editor-card {
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  margin-bottom: 16px;
-  overflow: hidden;
-  background: var(--background-primary);
-}
-
-.nexus-row-editor-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
-  background: var(--background-secondary);
-  border-bottom: 1px solid var(--background-modifier-border);
-}
-
-.nexus-row-editor-card-name {
-  font-weight: 600;
-  font-size: 0.9rem;
-}
-
-.nexus-row-editor-card-actions {
-  display: flex;
-  gap: 4px;
-}
-
 .nexus-row-editor-card-btn {
   background: none;
   border: none;
@@ -1245,49 +1209,42 @@
   opacity: 1;
 }
 
+.nexus-row-editor-col-sub {
+  background: var(--interactive-accent);
+  opacity: 0.1;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  border: 1px dashed var(--interactive-accent);
+  margin: 2px 4px;
+}
+
+.nexus-row-editor-col-sub .nexus-row-editor-col-label {
+  font-size: 0.65rem;
+}
+
+.nexus-col-slot-heading {
+  padding: 8px 0 4px 0;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.nexus-col-slot-heading:first-child {
+  border-top: none;
+}
+
+.nexus-row-editor-fields .nexus-column-slot-row {
+  padding: 2px 0;
+}
+
+.nexus-row-editor-fields .nexus-row-editor-card-btn {
+  margin: 4px 0;
+}
+
 .nexus-row-editor-fields {
   padding: 8px 14px;
   border-top: 1px solid var(--background-modifier-border);
-}
-
-.nexus-row-editor-yaml {
-  padding: 10px 14px;
-  border-top: 1px solid var(--background-modifier-border);
-  background: var(--background-secondary);
-}
-
-.nexus-row-editor-yaml-label {
-  font-size: 0.7rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-  margin-bottom: 6px;
-  display: block;
-}
-
-.nexus-row-editor-yaml pre {
-  margin: 0;
-  font-size: 0.75rem;
-  line-height: 1.4;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-/* ============================================================
-   Code block in settings
-   ============================================================ */
-
-.nexus-settings-code-block {
-  background: var(--background-secondary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 6px;
-  padding: 10px 14px;
-  font-size: 0.75rem;
-  line-height: 1.5;
-  overflow-x: auto;
-  white-space: pre;
-  margin: 8px 0 0 0;
 }
 
 /* ============================================================
@@ -1316,8 +1273,4 @@
     grid-template-columns: 1fr;
   }
 
-  .nexus-settings-tabs {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
 }

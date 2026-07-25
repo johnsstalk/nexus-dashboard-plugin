@@ -1,6 +1,5 @@
-import { MarkdownRenderChild, TFolder, Menu, Notice, TFile } from "obsidian";
+import { MarkdownRenderChild, Menu, Notice, TFile } from "obsidian";
 import type NexusDashboardPlugin from "./main";
-import { NexusSettings } from "./types";
 import { DIVIDER_PRESETS } from "./defaults";
 import { SMALL_ICONS, ICONS, DEFAULT_ICON } from "./icons";
 import { renderFiglet, getFontByName } from "./figlet";
@@ -10,13 +9,19 @@ import {
 	DashboardBlock,
 	DividerBlockConfig,
 	HeaderConfig,
+	StatsBlockConfig,
+	SearchBlockConfig,
+	HeadingConfig,
+	HeadingBlockConfig,
 	SectionConfig,
 	CardConfig,
 	LinksConfig,
 	RowConfig,
-	StackConfig,
+	ColumnConfig,
 	RecentlyConfig,
+	VaultListConfig,
 	SearchConfig,
+	ContentSlotType,
 } from "./types";
 
 export class NexusRenderer extends MarkdownRenderChild {
@@ -69,7 +74,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 		containerEl.empty();
 
 		const sourceContent = this.source.trim();
-		const baseConfig = this.buildConfigFromSettings();
+		const { config: baseConfig, placed } = this.buildConfigFromSettings();
 
 		let config: DashboardConfig;
 		if (sourceContent) {
@@ -85,12 +90,12 @@ export class NexusRenderer extends MarkdownRenderChild {
 		}
 
 		// ── Stats bar ─────────────────────────────────────
-		if (config.stats.enabled && config.stats.items.length > 0) {
+		if (!placed.has("stats") && config.stats.enabled && config.stats.items.length > 0) {
 			this.renderStatsBar(containerEl, config.stats);
 		}
 
 		// ── Search bar ────────────────────────────────────
-		if (config.search?.show) {
+		if (!placed.has("search") && config.search?.show) {
 			this.renderSearchBar(containerEl, config.search);
 		}
 
@@ -138,11 +143,23 @@ export class NexusRenderer extends MarkdownRenderChild {
 			case "row":
 				this.renderRow(containerEl, block, config);
 				break;
-			case "stack":
-				this.renderStack(containerEl, block, config);
+		case "column":
+			this.renderColumn(containerEl, block, config);
 				break;
 			case "recently":
 				await this.renderRecentlyModified(containerEl, block);
+				break;
+			case "vaultlist":
+				await this.renderVaultList(containerEl, block);
+				break;
+		case "stats":
+				this.renderStatsBar(containerEl, block.config);
+				break;
+			case "search":
+				this.renderSearchBar(containerEl, block.config);
+				break;
+			case "heading":
+				this.renderHeading(containerEl, block.config, config);
 				break;
 		}
 	}
@@ -172,7 +189,8 @@ export class NexusRenderer extends MarkdownRenderChild {
 			source.includes("divider:") ||
 			source.includes("links:") ||
 			source.includes("row:") ||
-			source.includes("stack:");
+			source.includes("column:") ||
+			source.includes("vaultlist:");
 		if (hasBlocks) {
 			merged.blocks = override.blocks;
 		} else {
@@ -203,7 +221,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 
 	// ── Build config from settings ─────────────────────────────
 
-	private buildConfigFromSettings(): DashboardConfig {
+	private buildConfigFromSettings(): { config: DashboardConfig; placed: Set<ContentSlotType> } {
 		const opts = this.plugin.settings;
 		const config = buildDefaultConfig();
 
@@ -213,7 +231,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 			color: opts.asciiDefaultColor || "#8A5CF6",
 			size: opts.asciiDefaultSize ?? 1,
 			mobileSize: opts.asciiMobileSize,
-			enabled: true,
+			enabled: opts.showHeader !== false,
 			align: opts.asciiDefaultAlign || "center",
 		};
 
@@ -225,8 +243,176 @@ export class NexusRenderer extends MarkdownRenderChild {
 			})),
 		};
 
-		if (opts.mocs && opts.mocs.length > 0) {
-			const section: SectionConfig = {
+		if (opts.showSearch) {
+			config.search = { show: true, default: opts.searchDefault || "vault" };
+		}
+
+		config.graph = { enabled: opts.showGraph, exclude: [] };
+
+		// Track which slot types are placed in layouts
+		const placed = new Set<ContentSlotType>();
+
+		const renderSlotChildren = (slot: ContentSlotType, headingOverride?: HeadingConfig, vaultListName?: string, dividerLabel?: string): DashboardBlock | null => {
+			switch (slot) {
+			case "moc-cards":
+				if (opts.showMocCards !== false && opts.mocs && opts.mocs.length > 0) {
+						placed.add("moc-cards");
+						return {
+							kind: "section",
+							columns: opts.mocGridColumns,
+							cards: opts.mocs.map((moc) => ({
+								type: "big" as const,
+								label: moc.title,
+								desc: moc.desc,
+								path: moc.path,
+								icon: moc.icon,
+							})),
+						};
+					}
+					return null;
+			case "quick-links":
+				if (opts.showQuickLinks !== false && opts.quickLinks && opts.quickLinks.length > 0) {
+						placed.add("quick-links");
+						return {
+							kind: "links",
+							title: opts.showQuickLinksDivider ? opts.quickLinksDividerLabel || "Quick Links" : undefined,
+							columns: 3,
+							items: opts.quickLinks.map((link) => ({
+								url: link.url,
+								label: link.label,
+								icon: link.icon,
+							})),
+						} as LinksConfig;
+					}
+					return null;
+				case "recently":
+					placed.add("recently");
+					return { kind: "recently", show: true, count: opts.recentCount } as RecentlyConfig;
+				case "vaultlist": {
+					const vlEntry = vaultListName ? opts.vaultLists.find((v) => v.name === vaultListName) : undefined;
+					if (vlEntry) {
+						placed.add("vaultlist");
+						return {
+							kind: "vaultlist",
+							show: true,
+							count: vlEntry.count || opts.recentCount,
+							path: vlEntry.path || undefined,
+							tags: vlEntry.tags ? vlEntry.tags.split(",").map((t: string) => t.trim()).filter((t: string) => t.length > 0) : undefined,
+							showDivider: vlEntry.showDivider !== false,
+						} as VaultListConfig;
+					}
+					return null;
+				}
+			case "divider":
+				placed.add("divider");
+				return {
+					kind: "section",
+					columns: 1,
+					cards: [],
+					divider: {
+						kind: "divider",
+						title: dividerLabel || opts.dividerLabel || "",
+						type: "custom",
+					},
+				};
+			case "stats":
+					placed.add("stats");
+					return { kind: "stats", config: config.stats };
+				case "search":
+					placed.add("search");
+					return { kind: "search", config: config.search || { show: true } };
+				case "heading":
+					placed.add("heading");
+					return { kind: "heading", config: headingOverride || { text: "Section" } };
+				default:
+					return null;
+			}
+		};
+
+		// ── Build layout blocks from row/column layouts ──
+
+		if (opts.rowLayouts && opts.rowLayouts.length > 0) {
+			for (const rowLayout of opts.rowLayouts) {
+				const children: (SectionConfig | RowConfig | ColumnConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig)[] = [];
+				for (let i = 0; i < rowLayout.columns; i++) {
+					const slot = rowLayout.slots?.[i] || "none";
+					const headingKey = String(i);
+
+					if (Array.isArray(slot)) {
+					// Sub-slots: create a ColumnConfig for this column
+					const columnChildren: (SectionConfig | RowConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | VaultListConfig)[] = [];
+						for (let j = 0; j < slot.length; j++) {
+							const subSlot = slot[j];
+							const subHeadingKey = `${i}-${j}`;
+							const headingCfg = rowLayout.slotHeadings?.[subHeadingKey];
+							const vlName = rowLayout.vaultListSlots?.[subHeadingKey];
+							const dvLabel = rowLayout.dividerSlots?.[subHeadingKey];
+						const child = renderSlotChildren(subSlot, headingCfg, vlName, dvLabel);
+						if (child) {
+							columnChildren.push(child as SectionConfig | RowConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | VaultListConfig);
+						}
+						}
+					if (columnChildren.length > 0) {
+						children.push({
+							kind: "column",
+							spacing: "0.5rem",
+							children: columnChildren,
+							});
+						} else {
+							children.push({ kind: "section", columns: 1, cards: [] });
+						}
+					} else {
+						const headingCfg = rowLayout.slotHeadings?.[headingKey];
+						const vlName = rowLayout.vaultListSlots?.[headingKey];
+						const dvLabel = rowLayout.dividerSlots?.[headingKey];
+						const child = renderSlotChildren(slot, headingCfg, vlName, dvLabel);
+						if (child) {
+							children.push(child);
+						} else {
+							// empty column placeholder
+							children.push({ kind: "section", columns: 1, cards: [] });
+						}
+					}
+				}
+				if (children.length > 0) {
+					config.blocks.push({
+						kind: "row",
+						columns: rowLayout.columns,
+						proportion: rowLayout.proportion,
+						align: rowLayout.align,
+						children: children as (SectionConfig | ColumnConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | VaultListConfig)[],
+					});
+				}
+			}
+		}
+
+		if (opts.columnLayouts && opts.columnLayouts.length > 0) {
+			for (const columnLayout of opts.columnLayouts) {
+				const children: (SectionConfig | RowConfig | ColumnConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig)[] = [];
+				for (let i = 0; i < (columnLayout.slots || []).length; i++) {
+					const slot = columnLayout.slots[i];
+					const vlName = columnLayout.vaultListSlots?.[String(i)];
+					const dvLabel = columnLayout.dividerSlots?.[String(i)];
+					const child = renderSlotChildren(slot, undefined, vlName, dvLabel);
+					if (child) {
+						children.push(child);
+					}
+				}
+				if (children.length > 0) {
+					config.blocks.push({
+						kind: "column",
+						spacing: columnLayout.spacing,
+						align: columnLayout.align,
+						children: children as (SectionConfig | RowConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | VaultListConfig)[],
+					});
+				}
+			}
+		}
+
+		// ── Fallback: add unplaced content as standalone blocks ──
+
+		if (!placed.has("moc-cards") && opts.showMocCards !== false && opts.mocs && opts.mocs.length > 0) {
+			config.blocks.push({
 				kind: "section",
 				columns: opts.mocGridColumns,
 				cards: opts.mocs.map((moc) => ({
@@ -236,33 +422,27 @@ export class NexusRenderer extends MarkdownRenderChild {
 					path: moc.path,
 					icon: moc.icon,
 				})),
-			};
-			config.blocks.push(section);
+			});
 		}
 
-		// Quick Links from settings
-		if (opts.quickLinks && opts.quickLinks.length > 0) {
-			const linksBlock: LinksConfig = {
+		if (!placed.has("quick-links") && opts.showQuickLinks !== false && opts.quickLinks && opts.quickLinks.length > 0) {
+			config.blocks.push({
 				kind: "links",
-				title: "Quick Links",
+				title: opts.showQuickLinksDivider ? opts.quickLinksDividerLabel || "Quick Links" : undefined,
 				columns: 3,
 				items: opts.quickLinks.map((link) => ({
 					url: link.url,
 					label: link.label,
 					icon: link.icon,
 				})),
-			};
-			config.blocks.push(linksBlock);
+			});
 		}
 
-		// Search
-		if (opts.showSearch) {
-			config.search = { show: true, default: opts.searchDefault || "vault" };
+		if (!placed.has("recently") && opts.showRecently) {
+			config.blocks.push({ kind: "recently", show: true, count: opts.recentCount });
 		}
 
-		config.recently = opts.showRecently;
-		config.graph = { enabled: opts.showGraph, exclude: [] };
-		return config;
+		return { config, placed };
 	}
 
 	// ── Render: Header ─────────────────────────────────────────
@@ -302,6 +482,21 @@ export class NexusRenderer extends MarkdownRenderChild {
 			card.createEl("span", { text: String(count), cls: "nexus-stat-num" });
 			card.createEl("span", { text: item.label, cls: "nexus-stat-label" });
 		}
+	}
+
+	// ── Render: Heading ────────────────────────────────────────
+
+	private renderHeading(containerEl: HTMLElement, heading: HeadingConfig, config: DashboardConfig): void {
+		const headerFont = config.header.font || "ANSI Shadow";
+		const font = getFontByName(headerFont);
+		const rendered = renderFiglet(heading.text, { font });
+		const wrapper = containerEl.createDiv({ cls: "nexus-heading-wrapper" });
+		if (heading.align) wrapper.dataset.align = heading.align;
+		const pre = wrapper.createEl("pre", { text: rendered, cls: "nexus-heading-output" });
+		if (heading.color) pre.style.color = heading.color;
+		const sizeMap: Record<string, number> = { small: 0.4, medium: 0.6, large: 0.8 };
+		const size = sizeMap[heading.size || "medium"] || 0.6;
+		pre.style.setProperty("--nexus-heading-size", String(size));
 	}
 
 	// ── Render: Standalone Divider ─────────────────────────────
@@ -408,11 +603,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 			}
 
 			const child = children[i];
-			if (child.kind === "section" || child.kind === "divider" || child.kind === "links" || child.kind === "recently") {
-				this.renderBlock(colEl, child, config);
-			} else if (child.kind === "row" || child.kind === "stack") {
-				this.renderBlock(colEl, child, config);
-			}
+			this.renderBlock(colEl, child, config);
 
 			if (i < children.length - 1 && i < cols - 1) {
 				const dividerEl = rowEl.createDiv({ cls: "nexus-row-divider" });
@@ -421,37 +612,32 @@ export class NexusRenderer extends MarkdownRenderChild {
 		}
 	}
 
-	// ── Render: Stack ─────────────────────────────────────────
+	// ── Render: Column ─────────────────────────────────────────
 
-	private renderStack(containerEl: HTMLElement, stack: StackConfig, config: DashboardConfig): void {
-		if (stack.children.length === 0) return;
+	private renderColumn(containerEl: HTMLElement, column: ColumnConfig, config: DashboardConfig): void {
+		if (column.children.length === 0) return;
 
-		const stackEl = containerEl.createDiv({ cls: "nexus-stack" });
+		const columnEl = containerEl.createDiv({ cls: "nexus-column" });
 
 		// Apply spacing (vertical gap)
-		if (stack.spacing) {
-			stackEl.style.gap = stack.spacing;
+		if (column.spacing) {
+			columnEl.style.gap = column.spacing;
 		}
 
 		// Apply horizontal alignment
-		if (stack.align && stack.align !== "stretch") {
-			stackEl.style.alignItems = stack.align === "left" ? "flex-start" : 
-									  stack.align === "right" ? "flex-end" : "center";
+		if (column.align && column.align !== "stretch") {
+			columnEl.style.alignItems = column.align === "left" ? "flex-start" : 
+									  column.align === "right" ? "flex-end" : "center";
 		}
 
 		// Render children with dividers between them
-		for (let i = 0; i < stack.children.length; i++) {
-			const child = stack.children[i];
-			const itemEl = stackEl.createDiv({ cls: "nexus-stack-item" });
-			
-			if (child.kind === "section" || child.kind === "divider" || child.kind === "links" || child.kind === "recently") {
-				this.renderBlock(itemEl, child, config);
-			} else if (child.kind === "row") {
-				this.renderBlock(itemEl, child, config);
-			}
+		for (let i = 0; i < column.children.length; i++) {
+			const child = column.children[i];
+			const itemEl = columnEl.createDiv({ cls: "nexus-column-item" });
+			this.renderBlock(itemEl, child, config);
 
-			if (i < stack.children.length - 1) {
-				stackEl.createDiv({ cls: "nexus-stack-divider" });
+			if (i < column.children.length - 1) {
+				columnEl.createDiv({ cls: "nexus-column-divider" });
 			}
 		}
 	}
@@ -538,16 +724,15 @@ export class NexusRenderer extends MarkdownRenderChild {
 		}, { signal });
 	}
 
-	// ── Render: Recently Modified ──────────────────────────────
+	// ── Shared file filtering + card rendering helpers ──────────
 
-	private async renderRecentlyModified(containerEl: HTMLElement, config: RecentlyConfig): Promise<void> {
+	private getFilteredFiles(config: { path?: string; tags?: string[]; count?: number }, defaultCount: number): TFile[] {
 		const opts = this.plugin.settings;
-		const count = config.count ?? opts.recentCount ?? 9;
+		const count = config.count ?? defaultCount;
 		const exclude = opts.excludeFolders || [];
 
 		let files = this.plugin.app.vault.getMarkdownFiles();
 
-		// Path filter
 		if (config.path) {
 			const paths = config.path.split(",").map((p) => p.trim().toLowerCase()).filter((p) => p.length > 0);
 			files = files.filter((f) => {
@@ -556,7 +741,6 @@ export class NexusRenderer extends MarkdownRenderChild {
 			});
 		}
 
-		// Tag filter
 		if (config.tags && config.tags.length > 0) {
 			files = files.filter((f) => {
 				const cache = this.plugin.app.metadataCache.getFileCache(f);
@@ -576,25 +760,15 @@ export class NexusRenderer extends MarkdownRenderChild {
 			});
 		}
 
-		// Exclude folders
 		files = files.filter((f) => {
 			const firstFolder = f.path.split("/")[0];
 			return !exclude.includes(firstFolder);
 		});
 
-		// Sort by mtime and limit
-		files = files.sort((a, b) => b.stat.mtime - a.stat.mtime).slice(0, count);
+		return files.sort((a, b) => b.stat.mtime - a.stat.mtime).slice(0, count);
+	}
 
-		if (files.length === 0) return;
-
-		const wrapperEl = containerEl.createDiv({ cls: "nexus-section" });
-		this.renderDivider(wrapperEl, opts.dividerLabel || "Recently Modified");
-
-		const gridEl = wrapperEl.createDiv({
-			cls: `nexus-mini-grid`,
-		});
-		gridEl.style.setProperty("--nexus-mini-columns", String(opts.miniGridColumns));
-
+	private renderFileCards(gridEl: HTMLElement, files: TFile[]): void {
 		for (const file of files) {
 			const parent = this.getParentFolder(file.path);
 			const card = gridEl.createEl("div", { cls: "nexus-card-mini" });
@@ -614,6 +788,38 @@ export class NexusRenderer extends MarkdownRenderChild {
 				body.createEl("div", { text: parent, cls: "nexus-card-mini-desc" });
 			}
 		}
+	}
+
+	// ── Render: Recently Modified ──────────────────────────────
+
+	private async renderRecentlyModified(containerEl: HTMLElement, config: RecentlyConfig): Promise<void> {
+		const opts = this.plugin.settings;
+		const files = this.getFilteredFiles(config, opts.recentCount ?? 9);
+		if (files.length === 0) return;
+
+		const wrapperEl = containerEl.createDiv({ cls: "nexus-section" });
+		this.renderDivider(wrapperEl, opts.dividerLabel || "Recently Modified");
+
+		const gridEl = wrapperEl.createDiv({ cls: "nexus-mini-grid" });
+		gridEl.style.setProperty("--nexus-mini-columns", String(opts.miniGridColumns));
+		this.renderFileCards(gridEl, files);
+	}
+
+	// ── Render: Vault List ─────────────────────────────────────
+
+	private async renderVaultList(containerEl: HTMLElement, config: VaultListConfig): Promise<void> {
+		const opts = this.plugin.settings;
+		const files = this.getFilteredFiles(config, 9);
+		if (files.length === 0) return;
+
+		const wrapperEl = containerEl.createDiv({ cls: "nexus-section" });
+		if (config.showDivider !== false) {
+			this.renderDivider(wrapperEl, config.path || "Vault List");
+		}
+
+		const gridEl = wrapperEl.createDiv({ cls: "nexus-mini-grid" });
+		gridEl.style.setProperty("--nexus-mini-columns", String(opts.miniGridColumns));
+		this.renderFileCards(gridEl, files);
 	}
 
 	// ── Render: Graph Links ────────────────────────────────────
@@ -653,7 +859,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 				}
 			} else if (block.kind === "row") {
 				this.collectCardPaths(block.children, paths, exclude);
-			} else if (block.kind === "stack") {
+			} else if (block.kind === "column") {
 				this.collectCardPaths(block.children, paths, exclude);
 			} else if (block.kind === "links") {
 				for (const item of block.items) {
@@ -837,7 +1043,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 
 	// ── Row: column drag ──────────────────────────────────────
 
-	private setupColumnDrag(dividerEl: HTMLElement, rowEl: HTMLElement, colWidths: string[], dividerIdx: number, rowIndex: number): void {
+	private setupColumnDrag(dividerEl: HTMLElement, rowEl: HTMLElement, _colWidths: string[], dividerIdx: number, rowIndex: number): void {
 		const MIN_WIDTH = 20;
 		const DIVIDER_WIDTH = 8;
 		let isDragging = false;

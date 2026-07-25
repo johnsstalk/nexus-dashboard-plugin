@@ -20,3 +20,9 @@ Thumbs.db
 # Dev artifacts
 MERGE_LOG.md
 styles.css.map
+
+# Vibe Code Orchestrator artifacts
+.vibeskills/
+outputs/
+docs/plans/
+docs/requirements/

@@ -1,21 +1,18 @@
 import { App, PluginSettingTab, Setting, Notice, setIcon, Modal } from "obsidian";
 import type NexusDashboardPlugin from "./main";
 import type {
-	NexusSettings,
 	MocEntry,
 	QuickLinkEntry,
 	RowLayoutEntry,
-	TabEntry,
+	ColumnLayoutEntry,
 	StatEntry,
-	DividerDesign,
+	ContentSlotType,
+	VaultListEntry,
 } from "./types";
 import { getAvailableFonts, renderFiglet } from "./figlet";
 import { ICONS, SMALL_ICONS } from "./icons";
 import {
 	DEFAULT_SETTINGS,
-	DEFAULT_MOCS,
-	DEFAULT_STATS,
-	DEFAULT_DIVIDER_DESIGN,
 	DIVIDER_PRESETS,
 	DIVIDER_PRESET_NAMES,
 	detectDividerPreset,
@@ -23,6 +20,18 @@ import {
 } from "./defaults";
 
 export const ICON_NAMES = Object.keys(ICONS);
+
+export const CONTENT_SLOT_OPTIONS: Record<ContentSlotType, string> = {
+	"none": "Empty",
+	"stats": "Stats",
+	"search": "Search",
+	"heading": "Heading",
+	"moc-cards": "MOC Cards",
+	"quick-links": "Quick Links",
+	"recently": "Recently Modified",
+	"vaultlist": "Vault List",
+	"divider": "Divider",
+};
 
 function getVaultFolders(app: App): string[] {
 	const folders = new Set<string>();
@@ -93,9 +102,8 @@ interface SettingTab {
 const SETTING_TABS: SettingTab[] = [
 	{ id: "general", name: "General", icon: "gear" },
 	{ id: "header", name: "Header", icon: "type" },
-	{ id: "layout", name: "Layout", icon: "layout-grid" },
-	{ id: "row-editor", name: "Row Editor", icon: "columns-3" },
-	{ id: "recent-links", name: "Recent & Links", icon: "clock" },
+	{ id: "layout", name: "Dashboard", icon: "layout-grid" },
+	{ id: "components", name: "Components", icon: "component" },
 ];
 
 export class NexusSettingTab extends PluginSettingTab {
@@ -103,6 +111,8 @@ export class NexusSettingTab extends PluginSettingTab {
 	private draggedIndex: number | null = null;
 	private activeTab = "general";
 	private collapsedCards = new Map<number, boolean>();
+	private collapsedRowCards = new Map<number, boolean>();
+	private collapsedColCards = new Map<number, boolean>();
 
 	constructor(app: App, plugin: NexusDashboardPlugin) {
 		super(app, plugin);
@@ -145,13 +155,10 @@ export class NexusSettingTab extends PluginSettingTab {
 				this.displayHeaderTab(content);
 				break;
 			case "layout":
-				this.displayLayoutTab(content);
+				this.displayDashboardTab(content);
 				break;
-			case "row-editor":
-				this.displayRowEditorTab(content);
-				break;
-			case "recent-links":
-				this.displayRecentLinksTab(content);
+			case "components":
+				this.displayComponentsTab(content);
 				break;
 		}
 	}
@@ -170,51 +177,6 @@ export class NexusSettingTab extends PluginSettingTab {
 					.onChange(async (value) => {
 						this.plugin.settings.openOnStartup = value;
 						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Show search bar")
-			.setDesc("Show a vault-wide search bar on the dashboard")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showSearch)
-					.onChange(async (value) => {
-						this.plugin.settings.showSearch = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		// ── Stats ──────────────────────────────────────
-		new Setting(containerEl).setHeading().setName("Stats");
-
-		new Setting(containerEl)
-			.setName("Show stats bar")
-			.setDesc("Toggle stats bar visibility on the dashboard")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showStats)
-					.onChange(async (value) => {
-						this.plugin.settings.showStats = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		this.plugin.settings.stats.forEach((stat, i) => {
-			this.renderStatRow(containerEl, stat, i);
-		});
-
-		new Setting(containerEl)
-			.setName("Add stat")
-			.setDesc("Add a new counter to the stats bar.")
-			.addButton((btn) =>
-				btn
-					.setButtonText("+ Add Stat")
-					.setCta()
-					.onClick(async () => {
-						this.plugin.settings.stats.push({ folder: "", label: "New" });
-						await this.plugin.saveSettings();
-						this.display();
 					})
 			);
 
@@ -275,6 +237,18 @@ export class NexusSettingTab extends PluginSettingTab {
 			text: "Configure the default appearance of the ASCII art header.",
 			cls: "setting-item-description",
 		});
+
+		new Setting(containerEl)
+			.setName("Show header")
+			.setDesc("Toggle the ASCII art header on the dashboard")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.showHeader)
+					.onChange(async (value) => {
+						this.plugin.settings.showHeader = value;
+						await this.plugin.saveSettings();
+					})
+			);
 
 		const fonts = getAvailableFonts();
 
@@ -363,148 +337,201 @@ export class NexusSettingTab extends PluginSettingTab {
 					this.plugin.settings.asciiDefaultAlign = value as "left" | "center" | "right";
 					await this.plugin.saveSettings();
 					this.updateAsciiPreview();
-				});
 			});
+		});
 
 		// Preview
 		const previewContainer = containerEl.createDiv({ cls: "nexus-settings-preview" });
 		this.renderAsciiPreview(previewContainer);
 	}
 
-	// ═══════════════════════════════════════════════════════
-	//  TAB: Layout
-	// ═══════════════════════════════════════════════════════
+	// ── Shared helpers ─────────────────────────────────────────
 
-	private displayLayoutTab(containerEl: HTMLElement): void {
-		new Setting(containerEl)
-			.setName("MOC grid columns")
-			.setDesc("Number of columns for the MOC card grid")
-			.addSlider((slider) =>
-				slider
-					.setLimits(1, 4, 1)
-					.setValue(this.plugin.settings.mocGridColumns)
-					.setDynamicTooltip()
-					.onChange(async (value) => {
-						this.plugin.settings.mocGridColumns = value;
-						await this.plugin.saveSettings();
-					})
-			);
+	private setupDragAndDrop(
+		heading: HTMLElement,
+		index: number,
+		arr: { splice: (start: number, deleteCount: number) => unknown[] },
+		collapsedMap: Map<number, boolean>,
+	): { titleWrap: HTMLElement; actions: HTMLElement } {
+		heading.draggable = true;
 
-		new Setting(containerEl)
-			.setName("Recent notes grid columns")
-			.setDesc("Number of columns for the recent notes grid")
-			.addSlider((slider) =>
-				slider
-					.setLimits(1, 4, 1)
-					.setValue(this.plugin.settings.miniGridColumns)
-					.setDynamicTooltip()
-					.onChange(async (value) => {
-						this.plugin.settings.miniGridColumns = value;
-						await this.plugin.saveSettings();
-					})
-			);
+		const dragHandle = heading.createDiv({ cls: "nexus-settings-moc-drag", text: "⋮⋮" });
+		dragHandle.draggable = false;
 
-		new Setting(containerEl)
-			.setName("Show graph links")
-			.setDesc("Inject graph wikilinks on empty code blocks (can be overridden per-block)")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showGraph)
-					.onChange(async (value) => {
-						this.plugin.settings.showGraph = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		// ── MOC Cards ──────────────────────────────────
-		new Setting(containerEl).setHeading().setName("MOC cards");
-		containerEl.createEl("p", {
-			text: "Configure the MOC cards shown on your dashboard.",
-			cls: "setting-item-description",
+		heading.addEventListener("dragstart", (e) => {
+			this.draggedIndex = index;
+			heading.classList.add("nexus-dragging");
+			if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
 		});
 
-		this.plugin.settings.mocs.forEach((moc, i) => {
-			this.renderMocCard(containerEl, moc, i);
+		heading.addEventListener("dragend", () => {
+			heading.classList.remove("nexus-dragging");
+			this.draggedIndex = null;
 		});
 
-		new Setting(containerEl)
-			.setName("Add MOC card")
-			.setDesc("Add a new card to the dashboard grid.")
-			.addButton((btn) =>
-				btn
-					.setButtonText("+ Add MOC")
-					.setCta()
-					.onClick(async () => {
-						this.plugin.settings.mocs.push({
-							path: "MOC/New MOC",
-							title: "New MOC",
-							desc: "Description here",
-							icon: "MOC",
-						});
-						await this.plugin.saveSettings();
-						this.display();
-					})
-			);
+		heading.addEventListener("dragover", (e) => {
+			e.preventDefault();
+			if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+			heading.classList.add("nexus-drag-over");
+		});
 
+		heading.addEventListener("dragleave", () => {
+			heading.classList.remove("nexus-drag-over");
+		});
+
+		heading.addEventListener("drop", async (e) => {
+			e.preventDefault();
+			heading.classList.remove("nexus-drag-over");
+			if (this.draggedIndex === null || this.draggedIndex === index) return;
+			const [moved] = arr.splice(this.draggedIndex, 1);
+			arr.splice(index, 0, moved);
+			await this.plugin.saveSettings();
+			this.display();
+		});
+
+		const isCollapsed = collapsedMap.get(index) ?? true;
+		const arrow = heading.createDiv({ cls: `nexus-settings-moc-arrow ${isCollapsed ? "collapsed" : ""}` });
+		arrow.innerHTML = SVG.chevronDown;
+
+		const titleWrap = heading.createDiv({ cls: "nexus-settings-moc-title" });
+		titleWrap.addEventListener("click", (e) => e.stopPropagation());
+
+		const actions = heading.createDiv({ cls: "nexus-settings-moc-actions" });
+		actions.addEventListener("click", (e) => e.stopPropagation());
+
+		return { titleWrap, actions };
+	}
+
+	private addVaultListSelector(
+		parent: HTMLElement,
+		paddingLeft: string,
+		currentValue: string,
+		onChange: (value: string) => void,
+	): void {
+		const row = parent.createDiv({ cls: "nexus-column-slot-row" });
+		row.style.display = "flex";
+		row.style.alignItems = "center";
+		row.style.gap = "8px";
+		row.style.paddingLeft = paddingLeft;
+
+		const label = row.createEl("span", { text: "List:", cls: "setting-item-description" });
+		label.style.minWidth = "40px";
+
+		const select = row.createEl("select", { cls: "dropdown" });
+		select.createEl("option", { text: "— Select list —", value: "" });
+		for (const vl of this.plugin.settings.vaultLists) {
+			const opt = select.createEl("option", { text: vl.name, value: vl.name });
+			if (vl.name === currentValue) opt.selected = true;
+		}
+		select.addEventListener("change", () => onChange(select.value));
+
+		if (this.plugin.settings.vaultLists.length === 0) {
+			const hint = row.createEl("span", {
+				text: "Add vault lists in the Components tab first",
+				cls: "setting-item-description",
+			});
+			hint.style.color = "var(--text-muted)";
+			hint.style.fontStyle = "italic";
+		}
+	}
+
+	private addDividerLabelInput(
+		parent: HTMLElement,
+		paddingLeft: string,
+		currentValue: string,
+		onChange: (value: string) => void,
+	): void {
+		const row = parent.createDiv({ cls: "nexus-column-slot-row" });
+		row.style.display = "flex";
+		row.style.alignItems = "center";
+		row.style.gap = "8px";
+		row.style.paddingLeft = paddingLeft;
+
+		const label = row.createEl("span", { text: "Label:", cls: "setting-item-description" });
+		label.style.minWidth = "40px";
+
+		const input = row.createEl("input", { type: "text", cls: "setting-text-input" });
+		input.value = currentValue;
+		input.placeholder = "Recently Modified";
+		input.addEventListener("change", () => onChange(input.value));
 	}
 
 	// ═══════════════════════════════════════════════════════
-	//  TAB: Row Editor
+	//  TAB: Dashboard (layout builder)
 	// ═══════════════════════════════════════════════════════
 
-	private displayRowEditorTab(containerEl: HTMLElement): void {
+	private displayDashboardTab(containerEl: HTMLElement): void {
 		containerEl.createEl("p", {
-			text: "Define reusable row layouts. Each row places content side-by-side in columns. Use these in code blocks to structure your dashboard.",
+			text: "Build your dashboard layout by arranging rows, columns, and dividers. Assign content to each slot.",
 			cls: "setting-item-description",
 		});
 
-		const layouts = this.plugin.settings.rowLayouts;
+		// ── Row layouts ──────────────────────────────────
+		new Setting(containerEl).setHeading().setName("Row layouts");
+		containerEl.createEl("p", {
+			text: "Rows place content side-by-side in columns. Assign a content slot to each column.",
+			cls: "setting-item-description",
+		});
 
-		// ── Visual preview of all layouts ─────────────────
-		if (layouts.length > 0) {
-			const previewSection = containerEl.createDiv({ cls: "nexus-row-editor-preview-section" });
-			previewSection.createEl("h4", { text: "Layout Preview", cls: "nexus-row-editor-section-title" });
-
-			for (let i = 0; i < layouts.length; i++) {
-				this.renderRowLayoutCard(previewSection, layouts[i], i);
-			}
+		const rowLayouts = this.plugin.settings.rowLayouts;
+		for (let i = 0; i < rowLayouts.length; i++) {
+			this.renderRowLayoutCard(containerEl, rowLayouts[i], i);
 		}
 
-		// ── Add layout ───────────────────────────────────
-		new Setting(containerEl).setHeading().setName("Add layout");
-
 		new Setting(containerEl)
-			.setName("New row layout")
-			.setDesc("Create a new row layout template")
+			.setName("Add row layout")
+			.setDesc("Create a new row with columns")
 			.addButton((btn) =>
 				btn
-					.setButtonText("+ Add Layout")
+					.setButtonText("+ Add Row")
 					.setCta()
 					.onClick(async () => {
-						const n = layouts.length + 1;
-						layouts.push({
-							name: `Layout ${n}`,
+						const n = rowLayouts.length + 1;
+						rowLayouts.push({
+							name: `Row ${n}`,
 							columns: 2,
 							proportion: "50/50",
 							align: "top",
+							slots: ["moc-cards", "none"],
 						});
 						await this.plugin.saveSettings();
 						this.display();
 					})
 			);
 
-		// ── YAML reference ────────────────────────────────
-		new Setting(containerEl).setHeading().setName("YAML reference");
+		// ── Column layouts ────────────────────────────────
+		new Setting(containerEl).setHeading().setName("Column layouts");
 		containerEl.createEl("p", {
-			text: "Use row layouts in code blocks with the row: keyword:",
+			text: "Columns place content vertically. Add slots to build a vertical column of dashboard sections.",
 			cls: "setting-item-description",
 		});
-		const codeEl = containerEl.createEl("pre", { cls: "nexus-settings-code-block" });
-		codeEl.createEl("code", {
-			text: `row:\n  - section:\n      columns: 2\n      cards:\n        - label: Left\n          path: Left.md\n  - section:\n      columns: 1\n      cards:\n        - label: Right\n          path: Right.md`,
-		});
 
-		// ── Saved row proportions (from drag resize) ──────
+		const columnLayouts = this.plugin.settings.columnLayouts;
+		for (let i = 0; i < columnLayouts.length; i++) {
+			this.renderColumnLayoutCard(containerEl, columnLayouts[i], i);
+		}
+
+		new Setting(containerEl)
+			.setName("Add column layout")
+			.setDesc("Create a new vertical column")
+			.addButton((btn) =>
+				btn
+					.setButtonText("+ Add Column")
+					.setCta()
+					.onClick(async () => {
+						const n = columnLayouts.length + 1;
+						columnLayouts.push({
+							name: `Column ${n}`,
+							spacing: "1rem",
+							align: "stretch",
+							slots: ["moc-cards"],
+						});
+						await this.plugin.saveSettings();
+						this.display();
+					})
+			);
+
+		// ── Saved row proportions ─────────────────────────
 		const rowSizes = this.plugin.settings.rowSizes;
 		const sizeKeys = Object.keys(rowSizes);
 		if (sizeKeys.length > 0) {
@@ -533,25 +560,50 @@ export class NexusSettingTab extends PluginSettingTab {
 	}
 
 	private renderRowLayoutCard(containerEl: HTMLElement, layout: RowLayoutEntry, index: number): void {
-		const card = containerEl.createDiv({ cls: "nexus-row-editor-card" });
+		const isCollapsed = this.collapsedRowCards.get(index) ?? true;
 
-		// Header with name + actions
-		const header = card.createDiv({ cls: "nexus-row-editor-card-header" });
-		const nameEl = header.createEl("span", { text: layout.name, cls: "nexus-row-editor-card-name" });
+		const heading = containerEl.createDiv({ cls: "nexus-settings-moc-heading" });
+		const { titleWrap, actions } = this.setupDragAndDrop(heading, index, this.plugin.settings.rowLayouts, this.collapsedRowCards);
 
-		const actions = header.createDiv({ cls: "nexus-row-editor-card-actions" });
+		// Title with slot summary
+		const slots = layout.slots || [];
+		const slotSummary = slots.map((s) => {
+			if (Array.isArray(s)) {
+				return s.map((sub) => CONTENT_SLOT_OPTIONS[sub] || "Empty").join(" + ");
+			}
+			return CONTENT_SLOT_OPTIONS[s] || "Empty";
+		}).join(" | ");
+		titleWrap.createEl("span", { text: `${layout.name} (${layout.columns} cols: ${slotSummary})` });
 
 		// Delete button
-		const deleteBtn = actions.createEl("button", { cls: "nexus-row-editor-card-btn" });
+		const deleteBtn = actions.createEl("button", { cls: "nexus-settings-moc-btn--delete", attr: { "aria-label": "Remove" } });
 		setIcon(deleteBtn, "trash");
-		deleteBtn.addEventListener("click", async () => {
-			this.plugin.settings.rowLayouts.splice(index, 1);
-			await this.plugin.saveSettings();
+		deleteBtn.addEventListener("click", async (e) => {
+			e.stopPropagation();
+			new ConfirmModal(
+				this.app,
+				`Remove "${layout.name}"?`,
+				"This row layout will be removed from your dashboard.",
+				async () => {
+					this.plugin.settings.rowLayouts.splice(index, 1);
+					await this.plugin.saveSettings();
+					this.display();
+				}
+			).open();
+		});
+
+		// Toggle collapse
+		heading.addEventListener("click", () => {
+			this.collapsedRowCards.set(index, !isCollapsed);
 			this.display();
 		});
 
-		// Visual row preview
-		const preview = card.createDiv({ cls: "nexus-row-editor-visual" });
+		if (isCollapsed) return;
+
+		// ── Expanded content ──────────────────────────────────────
+
+		// Visual row preview with slot labels
+		const preview = containerEl.createDiv({ cls: "nexus-row-editor-visual" });
 		const cols = layout.columns;
 		const parts = layout.proportion.split("/").map((s) => parseInt(s.trim(), 10));
 
@@ -559,11 +611,20 @@ export class NexusSettingTab extends PluginSettingTab {
 			const colEl = preview.createDiv({ cls: "nexus-row-editor-col" });
 			const width = (Number.isFinite(parts[i]) && (parts[i] ?? 0) > 0) ? (parts[i] as number) : Math.floor(100 / cols);
 			colEl.style.width = `${width}%`;
-			colEl.createEl("span", { text: `${width}%`, cls: "nexus-row-editor-col-label" });
+			const slot = layout.slots?.[i] || "none";
+			if (Array.isArray(slot)) {
+				for (const sub of slot) {
+					const subEl = colEl.createDiv({ cls: "nexus-row-editor-col-sub" });
+					subEl.createEl("span", { text: CONTENT_SLOT_OPTIONS[sub] || "Empty", cls: "nexus-row-editor-col-label" });
+				}
+			} else {
+				const slotLabel = CONTENT_SLOT_OPTIONS[slot as ContentSlotType] || "Empty";
+				colEl.createEl("span", { text: slotLabel, cls: "nexus-row-editor-col-label" });
+			}
 		}
 
 		// Edit fields
-		const fields = card.createDiv({ cls: "nexus-row-editor-fields" });
+		const fields = containerEl.createDiv({ cls: "nexus-row-editor-fields" });
 
 		// Name
 		const nameSetting = new Setting(fields);
@@ -573,8 +634,7 @@ export class NexusSettingTab extends PluginSettingTab {
 				.setPlaceholder("Layout name")
 				.setValue(layout.name)
 				.onChange(async (value) => {
-					this.plugin.settings.rowLayouts[index].name = value || `Layout ${index + 1}`;
-					nameEl.textContent = value || `Layout ${index + 1}`;
+					this.plugin.settings.rowLayouts[index].name = value || `Row ${index + 1}`;
 					await this.plugin.saveSettings();
 				})
 		);
@@ -588,17 +648,22 @@ export class NexusSettingTab extends PluginSettingTab {
 				.setValue(layout.columns)
 				.setDynamicTooltip()
 				.onChange(async (value) => {
-					const newCols = parseInt(value, 10);
-					this.plugin.settings.rowLayouts[index].columns = Number.isFinite(newCols) && newCols >= 1 ? newCols : 2;
-					// Recalculate proportion to match column count
-					const part = Math.floor(100 / newCols);
+					const safeCols = Number.isFinite(value) && value >= 1 ? value : 2;
+					this.plugin.settings.rowLayouts[index].columns = safeCols;
+					const part = Math.floor(100 / safeCols);
 					const newParts: number[] = [];
-					for (let j = 0; j < newCols - 1; j++) {
+					for (let j = 0; j < safeCols - 1; j++) {
 						newParts.push(part);
 					}
-					newParts.push(100 - part * (newCols - 1));
-					const newProp = newParts.join("/");
-					this.plugin.settings.rowLayouts[index].proportion = newProp;
+					newParts.push(100 - part * (safeCols - 1));
+					this.plugin.settings.rowLayouts[index].proportion = newParts.join("/");
+					const currentSlots = this.plugin.settings.rowLayouts[index].slots || [];
+					while (currentSlots.length < safeCols) {
+						currentSlots.push("none");
+					}
+					while (currentSlots.length > safeCols) {
+						currentSlots.pop();
+					}
 					await this.plugin.saveSettings();
 					this.display();
 				})
@@ -632,27 +697,483 @@ export class NexusSettingTab extends PluginSettingTab {
 			});
 		});
 
-		// YAML snippet
-		const yamlEl = card.createDiv({ cls: "nexus-row-editor-yaml" });
-		yamlEl.createEl("span", { text: "YAML", cls: "nexus-row-editor-yaml-label" });
-		const proportion = layout.proportion;
-		const yamlLines = [`row:`, `  proportion: "${proportion}"`];
-		if (layout.align !== "top") {
-			yamlLines.push(`  align: ${layout.align}`);
-		}
+		// ── Slot editors per column ──
+		const currentSlots = layout.slots || [];
+		if (!layout.slotHeadings) layout.slotHeadings = {};
+
 		for (let i = 0; i < layout.columns; i++) {
-			yamlLines.push(`  - section:`);
-			yamlLines.push(`      columns: 1`);
-			yamlLines.push(`      cards: []`);
+			const slotVal = currentSlots[i] || "none";
+			const isSubSlot = Array.isArray(slotVal);
+			const slotList: ContentSlotType[] = isSubSlot ? slotVal as ContentSlotType[] : [slotVal as ContentSlotType];
+
+			const colHeading = fields.createEl("div", { cls: "nexus-col-slot-heading" });
+			colHeading.createEl("strong", { text: `Column ${i + 1}` });
+
+			for (let si = 0; si < slotList.length; si++) {
+				const subKey = isSubSlot ? `${i}-${si}` : String(i);
+				const currentSlot = slotList[si];
+
+				const slotRow = fields.createDiv({ cls: "nexus-column-slot-row" });
+				slotRow.style.display = "flex";
+				slotRow.style.alignItems = "center";
+				slotRow.style.gap = "8px";
+
+				if (isSubSlot) {
+					const slotLabelEl = slotRow.createEl("span", { text: `Slot ${si + 1}:`, cls: "setting-item-description" });
+					slotLabelEl.style.minWidth = "60px";
+				}
+
+				const slotSelect = slotRow.createEl("select", { cls: "dropdown" });
+				for (const [key, label] of Object.entries(CONTENT_SLOT_OPTIONS)) {
+					const opt = slotSelect.createEl("option", { text: label, value: key });
+					if (key === currentSlot) opt.selected = true;
+				}
+				slotSelect.addEventListener("change", async () => {
+					const newVal = slotSelect.value as ContentSlotType;
+					if (isSubSlot) {
+						(this.plugin.settings.rowLayouts[index].slots[i] as ContentSlotType[])[si] = newVal;
+					} else {
+						this.plugin.settings.rowLayouts[index].slots[i] = newVal;
+					}
+					await this.plugin.saveSettings();
+					this.display();
+				});
+
+				// Remove button for sub-slots
+				if (isSubSlot && slotList.length > 1) {
+					const removeBtn = slotRow.createEl("button", { cls: "nexus-row-editor-card-btn" });
+					setIcon(removeBtn, "x");
+					removeBtn.addEventListener("click", async () => {
+						const arr = this.plugin.settings.rowLayouts[index].slots[i] as ContentSlotType[];
+						arr.splice(si, 1);
+						if (arr.length === 1) {
+							this.plugin.settings.rowLayouts[index].slots[i] = arr[0];
+						}
+						const headings = this.plugin.settings.rowLayouts[index].slotHeadings || {};
+						delete headings[`${i}-${si}`];
+						await this.plugin.saveSettings();
+						this.display();
+					});
+				}
+
+				// Heading config fields (when slot is "heading")
+				if (currentSlot === "heading") {
+					const headingCfg = layout.slotHeadings?.[subKey] || { text: "Section" };
+
+					const textRow = fields.createDiv({ cls: "nexus-column-slot-row" });
+					textRow.style.display = "flex";
+					textRow.style.alignItems = "center";
+					textRow.style.gap = "8px";
+					textRow.style.paddingLeft = isSubSlot ? "68px" : "8px";
+					const textLabel = textRow.createEl("span", { text: "Text:", cls: "setting-item-description" });
+					textLabel.style.minWidth = "40px";
+					const textInput = textRow.createEl("input", { type: "text", cls: "setting-text-input" });
+					textInput.value = headingCfg.text || "";
+					textInput.placeholder = "Heading text";
+					textInput.addEventListener("change", async () => {
+						const h = (this.plugin.settings.rowLayouts[index].slotHeadings ??= {});
+						h[subKey] = { ...(h[subKey] || { text: "Section" }), text: textInput.value };
+						await this.plugin.saveSettings();
+					});
+
+					const colorRow = fields.createDiv({ cls: "nexus-column-slot-row" });
+					colorRow.style.display = "flex";
+					colorRow.style.alignItems = "center";
+					colorRow.style.gap = "8px";
+					colorRow.style.paddingLeft = isSubSlot ? "68px" : "8px";
+					const colorLabel = colorRow.createEl("span", { text: "Color:", cls: "setting-item-description" });
+					colorLabel.style.minWidth = "40px";
+					const colorInput = colorRow.createEl("input", { type: "text", cls: "setting-text-input" });
+					colorInput.value = headingCfg.color || "";
+					colorInput.placeholder = "CSS color (optional)";
+					colorInput.addEventListener("change", async () => {
+						const h = (this.plugin.settings.rowLayouts[index].slotHeadings ??= {});
+						h[subKey] = { ...(h[subKey] || { text: "Section" }), color: colorInput.value || undefined };
+						await this.plugin.saveSettings();
+					});
+
+					const asRow = fields.createDiv({ cls: "nexus-column-slot-row" });
+					asRow.style.display = "flex";
+					asRow.style.alignItems = "center";
+					asRow.style.gap = "8px";
+					asRow.style.paddingLeft = isSubSlot ? "68px" : "8px";
+
+					const alignLabel = asRow.createEl("span", { text: "Align:", cls: "setting-item-description" });
+					alignLabel.style.minWidth = "40px";
+					const alignSelect = asRow.createEl("select", { cls: "dropdown" });
+					for (const [ak, al] of [["left", "Left"], ["center", "Center"], ["right", "Right"]]) {
+						const opt = alignSelect.createEl("option", { text: al, value: ak });
+						if (ak === (headingCfg.align || "left")) opt.selected = true;
+					}
+					alignSelect.addEventListener("change", async () => {
+						const h = (this.plugin.settings.rowLayouts[index].slotHeadings ??= {});
+						h[subKey] = { ...(h[subKey] || { text: "Section" }), align: alignSelect.value as "left" | "center" | "right" };
+						await this.plugin.saveSettings();
+					});
+
+					const sizeLabel = asRow.createEl("span", { text: "Size:", cls: "setting-item-description" });
+					sizeLabel.style.marginLeft = "12px";
+					const sizeSelect = asRow.createEl("select", { cls: "dropdown" });
+					for (const [sk, sl] of [["small", "Small"], ["medium", "Medium"], ["large", "Large"]]) {
+						const opt = sizeSelect.createEl("option", { text: sl, value: sk });
+						if (sk === (headingCfg.size || "medium")) opt.selected = true;
+					}
+					sizeSelect.addEventListener("change", async () => {
+						const h = (this.plugin.settings.rowLayouts[index].slotHeadings ??= {});
+						h[subKey] = { ...(h[subKey] || { text: "Section" }), size: sizeSelect.value as "small" | "medium" | "large" };
+						await this.plugin.saveSettings();
+					});
+				}
+
+				// Vault list selector (when slot is "vaultlist")
+				if (currentSlot === "vaultlist") {
+					this.addVaultListSelector(
+						fields,
+						isSubSlot ? "68px" : "8px",
+						this.plugin.settings.rowLayouts[index].vaultListSlots?.[subKey] || "",
+						async (value) => {
+							(this.plugin.settings.rowLayouts[index].vaultListSlots ??= {})[subKey] = value;
+							await this.plugin.saveSettings();
+						},
+					);
+				}
+
+				// Divider label input (when slot is "divider")
+				if (currentSlot === "divider") {
+					this.addDividerLabelInput(
+						fields,
+						isSubSlot ? "68px" : "8px",
+						this.plugin.settings.rowLayouts[index].dividerSlots?.[subKey] || "",
+						async (value) => {
+							(this.plugin.settings.rowLayouts[index].dividerSlots ??= {})[subKey] = value;
+							await this.plugin.saveSettings();
+						},
+					);
+				}
+			}
+
+			// "+ Add Slot" button per column
+			const addSlotRow = fields.createDiv({ cls: "nexus-column-slot-row" });
+			addSlotRow.style.paddingLeft = isSubSlot ? "68px" : "8px";
+			const addSlotBtn = addSlotRow.createEl("button", { cls: "nexus-row-editor-card-btn" });
+			addSlotBtn.textContent = "+ Add Slot";
+			addSlotBtn.addEventListener("click", async () => {
+				const current = this.plugin.settings.rowLayouts[index].slots[i];
+				if (Array.isArray(current)) {
+					current.push("none");
+				} else {
+					this.plugin.settings.rowLayouts[index].slots[i] = [current, "none"];
+				}
+				await this.plugin.saveSettings();
+				this.display();
+			});
 		}
-		yamlEl.createEl("pre", { text: yamlLines.join("\n"), cls: "nexus-settings-code-block" });
+	}
+
+	private renderColumnLayoutCard(containerEl: HTMLElement, layout: ColumnLayoutEntry, index: number): void {
+		const isCollapsed = this.collapsedColCards.get(index) ?? true;
+
+		const heading = containerEl.createDiv({ cls: "nexus-settings-moc-heading" });
+		const { titleWrap, actions } = this.setupDragAndDrop(heading, index, this.plugin.settings.columnLayouts, this.collapsedColCards);
+
+		// Title with slot summary
+		const slots = layout.slots || [];
+		const slotSummary = slots.map((s) => CONTENT_SLOT_OPTIONS[s] || "Empty").join(" → ");
+		titleWrap.createEl("span", { text: `${layout.name} (${slotSummary})` });
+
+		// Delete button
+		const deleteBtn = actions.createEl("button", { cls: "nexus-settings-moc-btn--delete", attr: { "aria-label": "Remove" } });
+		setIcon(deleteBtn, "trash");
+		deleteBtn.addEventListener("click", async (e) => {
+			e.stopPropagation();
+			new ConfirmModal(
+				this.app,
+				`Remove "${layout.name}"?`,
+				"This column layout will be removed from your dashboard.",
+				async () => {
+					this.plugin.settings.columnLayouts.splice(index, 1);
+					await this.plugin.saveSettings();
+					this.display();
+				}
+			).open();
+		});
+
+		// Toggle collapse
+		heading.addEventListener("click", () => {
+			this.collapsedColCards.set(index, !isCollapsed);
+			this.display();
+		});
+
+		if (isCollapsed) return;
+
+		// ── Expanded content ──────────────────────────────────────
+
+		// Visual column preview
+		const preview = containerEl.createDiv({ cls: "nexus-row-editor-visual" });
+		preview.style.flexDirection = "column";
+		preview.style.gap = "4px";
+		const previewSlots = layout.slots || [];
+		for (const slot of previewSlots) {
+			const slotEl = preview.createDiv({ cls: "nexus-row-editor-col" });
+			slotEl.style.width = "100%";
+			slotEl.style.minHeight = "24px";
+			slotEl.createEl("span", { text: CONTENT_SLOT_OPTIONS[slot] || "Empty", cls: "nexus-row-editor-col-label" });
+		}
+
+		// Edit fields
+		const fields = containerEl.createDiv({ cls: "nexus-row-editor-fields" });
+
+		// Name
+		const nameSetting = new Setting(fields);
+		nameSetting.setName("Name");
+		nameSetting.addText((text) =>
+			text
+				.setPlaceholder("Column name")
+				.setValue(layout.name)
+				.onChange(async (value) => {
+					this.plugin.settings.columnLayouts[index].name = value || `Column ${index + 1}`;
+					await this.plugin.saveSettings();
+				})
+		);
+
+		// Spacing
+		const spacingSetting = new Setting(fields);
+		spacingSetting.setName("Spacing");
+		spacingSetting.addText((text) =>
+			text
+				.setPlaceholder("1rem")
+				.setValue(layout.spacing)
+				.onChange(async (value) => {
+					this.plugin.settings.columnLayouts[index].spacing = value || "1rem";
+					await this.plugin.saveSettings();
+				})
+		);
+
+		// Alignment
+		const alignSetting = new Setting(fields);
+		alignSetting.setName("Horizontal align");
+		alignSetting.addDropdown((dropdown) => {
+			dropdown.addOption("stretch", "Stretch");
+			dropdown.addOption("left", "Left");
+			dropdown.addOption("center", "Center");
+			dropdown.addOption("right", "Right");
+			dropdown.setValue(layout.align);
+			dropdown.onChange(async (value) => {
+				this.plugin.settings.columnLayouts[index].align = value as "left" | "center" | "right" | "stretch";
+				await this.plugin.saveSettings();
+			});
+		});
+
+		// Slot list
+		const colSlots = layout.slots || [];
+		for (let i = 0; i < colSlots.length; i++) {
+			const slotRow = fields.createDiv({ cls: "nexus-column-slot-row" });
+			slotRow.style.display = "flex";
+			slotRow.style.alignItems = "center";
+			slotRow.style.gap = "8px";
+
+			const slotLabel = slotRow.createEl("span", { text: `Slot ${i + 1}:`, cls: "setting-item-description" });
+			slotLabel.style.minWidth = "60px";
+
+			const slotSelect = slotRow.createEl("select", { cls: "dropdown" });
+			for (const [key, label] of Object.entries(CONTENT_SLOT_OPTIONS)) {
+				const opt = slotSelect.createEl("option", { text: label, value: key });
+				if (key === colSlots[i]) opt.selected = true;
+			}
+			slotSelect.addEventListener("change", async () => {
+				this.plugin.settings.columnLayouts[index].slots[i] = slotSelect.value as ContentSlotType;
+				await this.plugin.saveSettings();
+			});
+
+			const removeBtn = slotRow.createEl("button", { cls: "nexus-row-editor-card-btn" });
+			setIcon(removeBtn, "x");
+			removeBtn.addEventListener("click", async () => {
+				this.plugin.settings.columnLayouts[index].slots.splice(i, 1);
+				await this.plugin.saveSettings();
+				this.display();
+			});
+
+			// Vault list selector (when slot is "vaultlist")
+			if (colSlots[i] === "vaultlist") {
+				this.addVaultListSelector(
+					fields,
+					"68px",
+					this.plugin.settings.columnLayouts[index].vaultListSlots?.[String(i)] || "",
+					async (value) => {
+						(this.plugin.settings.columnLayouts[index].vaultListSlots ??= {})[String(i)] = value;
+						await this.plugin.saveSettings();
+					},
+				);
+			}
+
+			// Divider label input (when slot is "divider")
+			if (colSlots[i] === "divider") {
+				this.addDividerLabelInput(
+					fields,
+					"68px",
+					this.plugin.settings.columnLayouts[index].dividerSlots?.[String(i)] || "",
+					async (value) => {
+						(this.plugin.settings.columnLayouts[index].dividerSlots ??= {})[String(i)] = value;
+						await this.plugin.saveSettings();
+					},
+				);
+			}
+		}
+
+		// Add slot button
+		const addSlotBtn = fields.createEl("button", { cls: "nexus-row-editor-card-btn" });
+		addSlotBtn.textContent = "+ Add Slot";
+		addSlotBtn.addEventListener("click", async () => {
+			this.plugin.settings.columnLayouts[index].slots.push("none");
+			await this.plugin.saveSettings();
+			this.display();
+		});
 	}
 
 	// ═══════════════════════════════════════════════════════
-	//  TAB: Recent & Links
+	//  TAB: Components (card/link/stats configs)
 	// ═══════════════════════════════════════════════════════
 
-	private displayRecentLinksTab(containerEl: HTMLElement): void {
+	private displayComponentsTab(containerEl: HTMLElement): void {
+		containerEl.createEl("p", {
+			text: "Configure the content that fills your dashboard layout slots.",
+			cls: "setting-item-description",
+		});
+
+		// ── MOC Cards ──────────────────────────────────
+		new Setting(containerEl).setHeading().setName("MOC cards");
+		containerEl.createEl("p", {
+			text: "Configure the MOC cards shown on your dashboard.",
+			cls: "setting-item-description",
+		});
+
+		new Setting(containerEl)
+			.setName("Show MOC cards")
+			.setDesc("Show map of content cards on the dashboard")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.showMocCards)
+					.onChange(async (value) => {
+						this.plugin.settings.showMocCards = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		this.plugin.settings.mocs.forEach((moc, i) => {
+			this.renderMocCard(containerEl, moc, i);
+		});
+
+		new Setting(containerEl)
+			.setName("Add MOC card")
+			.setDesc("Add a new card to the dashboard grid.")
+			.addButton((btn) =>
+				btn
+					.setButtonText("+ Add MOC")
+					.setCta()
+					.onClick(async () => {
+						this.plugin.settings.mocs.push({
+							path: "MOC/New MOC",
+							title: "New MOC",
+							desc: "Description here",
+							icon: "MOC",
+						});
+						await this.plugin.saveSettings();
+						this.display();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("MOC grid columns")
+			.setDesc("Number of columns for the MOC card grid")
+			.addSlider((slider) =>
+				slider
+					.setLimits(1, 4, 1)
+					.setValue(this.plugin.settings.mocGridColumns)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						this.plugin.settings.mocGridColumns = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Show graph links")
+			.setDesc("Inject graph wikilinks on empty code blocks (can be overridden per-block)")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.showGraph)
+					.onChange(async (value) => {
+						this.plugin.settings.showGraph = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		// ── Stats ──────────────────────────────────────
+		new Setting(containerEl).setHeading().setName("Stats");
+
+		new Setting(containerEl)
+			.setName("Show stats")
+			.setDesc("Show vault statistics on the dashboard")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.showStats)
+					.onChange(async (value) => {
+						this.plugin.settings.showStats = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		containerEl.createEl("p", {
+			text: "Configure the stat counters shown on the dashboard.",
+			cls: "setting-item-description",
+		});
+
+		this.plugin.settings.stats.forEach((stat, i) => {
+			this.renderStatEntry(containerEl, stat, i);
+		});
+
+		new Setting(containerEl)
+			.setName("Add stat")
+			.setDesc("Add a new stat counter")
+			.addButton((btn) =>
+				btn
+					.setButtonText("+ Add Stat")
+					.setCta()
+					.onClick(async () => {
+						this.plugin.settings.stats.push({ folder: "", label: "New Stat" });
+						await this.plugin.saveSettings();
+						this.display();
+					})
+			);
+
+		// ── Search ─────────────────────────────────────
+		new Setting(containerEl).setHeading().setName("Search");
+
+		new Setting(containerEl)
+			.setName("Show search bar")
+			.setDesc("Show a vault-wide search bar on the dashboard")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.showSearch)
+					.onChange(async (value) => {
+						this.plugin.settings.showSearch = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Search default")
+			.setDesc("Default search scope")
+			.addDropdown((dropdown) => {
+				dropdown.addOption("vault", "Vault");
+				dropdown.addOption("cards", "Cards");
+				dropdown.setValue(this.plugin.settings.searchDefault);
+				dropdown.onChange(async (value) => {
+					this.plugin.settings.searchDefault = value as "vault" | "cards";
+					await this.plugin.saveSettings();
+				});
+			});
+
 		// ── Recently Modified ──────────────────────────
 		new Setting(containerEl).setHeading().setName("Recently modified");
 
@@ -725,12 +1246,9 @@ export class NexusSettingTab extends PluginSettingTab {
 					})
 			);
 
-		// ── Divider ────────────────────────────────────
-		new Setting(containerEl).setHeading().setName("Divider");
-
 		new Setting(containerEl)
 			.setName("Divider label")
-			.setDesc("Text shown in the divider above recent notes")
+			.setDesc("Text shown in the divider above the recently modified section")
 			.addText((text) =>
 				text
 					.setPlaceholder("Recently Modified")
@@ -741,8 +1259,42 @@ export class NexusSettingTab extends PluginSettingTab {
 					})
 			);
 
+		// ── Vault Lists ─────────────────────────────────
+		new Setting(containerEl).setHeading().setName("Vault Lists");
 		containerEl.createEl("p", {
-			text: "Customize the appearance of section dividers.",
+			text: "Configure named vault lists for use in layout slots. Each list filters vault notes by path and/or tags.",
+			cls: "setting-item-description",
+		});
+
+		this.plugin.settings.vaultLists.forEach((vl, i) => {
+			this.renderVaultListEntry(containerEl, vl, i);
+		});
+
+		new Setting(containerEl)
+			.setName("Add vault list")
+			.setDesc("Add a new named vault list for use in layout slots.")
+			.addButton((btn) =>
+				btn
+					.setButtonText("+ Add Vault List")
+					.setCta()
+					.onClick(async () => {
+						this.plugin.settings.vaultLists.push({
+							name: "New List",
+							path: "",
+							tags: "",
+							count: this.plugin.settings.recentCount,
+							showDivider: true,
+						});
+						await this.plugin.saveSettings();
+						this.display();
+					})
+			);
+
+		// ── Divider ────────────────────────────────────
+		new Setting(containerEl).setHeading().setName("Divider");
+
+		containerEl.createEl("p", {
+			text: "Customize the appearance of section dividers. Labels are configured per component above.",
 			cls: "setting-item-description",
 		});
 
@@ -771,9 +1323,46 @@ export class NexusSettingTab extends PluginSettingTab {
 		// ── Quick Links ────────────────────────────────
 		new Setting(containerEl).setHeading().setName("Quick Links");
 		containerEl.createEl("p", {
-			text: "Configure the quick links shown on the dashboard (empty code block only).",
+			text: "Configure the quick links shown on the dashboard.",
 			cls: "setting-item-description",
 		});
+
+		new Setting(containerEl)
+			.setName("Show quick links")
+			.setDesc("Show quick links section on the dashboard")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.showQuickLinks)
+					.onChange(async (value) => {
+						this.plugin.settings.showQuickLinks = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Show divider")
+			.setDesc("Show a divider label above quick links")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.showQuickLinksDivider)
+					.onChange(async (value) => {
+						this.plugin.settings.showQuickLinksDivider = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Divider label")
+			.setDesc("Text shown in the divider above quick links")
+			.addText((text) =>
+				text
+					.setPlaceholder("Quick Links")
+					.setValue(this.plugin.settings.quickLinksDividerLabel)
+					.onChange(async (value) => {
+						this.plugin.settings.quickLinksDividerLabel = value || "Quick Links";
+						await this.plugin.saveSettings();
+					})
+			);
 
 		this.plugin.settings.quickLinks.forEach((link, i) => {
 			this.renderQuickLink(containerEl, link, i);
@@ -852,6 +1441,19 @@ export class NexusSettingTab extends PluginSettingTab {
 						return;
 					}
 				}
+				if (data.vaultLists && !Array.isArray(data.vaultLists)) {
+					new Notice("Invalid settings file: vaultLists must be an array");
+					return;
+				}
+				if (data.vaultLists) {
+					const validVl = data.vaultLists.every(
+						(v: Record<string, unknown>) => v && typeof v.name === "string"
+					);
+					if (!validVl) {
+						new Notice("Invalid settings file: malformed vault list entries");
+						return;
+					}
+				}
 				const validKeys = Object.keys(DEFAULT_SETTINGS);
 				const filtered: Record<string, unknown> = {};
 				for (const key of validKeys) {
@@ -863,7 +1465,7 @@ export class NexusSettingTab extends PluginSettingTab {
 				await this.plugin.saveSettings();
 				this.display();
 				new Notice("Settings imported");
-			} catch (e) {
+			} catch {
 				new Notice("Invalid settings file");
 			}
 		};
@@ -875,58 +1477,13 @@ export class NexusSettingTab extends PluginSettingTab {
 	renderMocCard(containerEl: HTMLElement, moc: MocEntry, index: number): void {
 		const isCollapsed = this.collapsedCards.get(index) ?? true;
 
-		// Heading bar
 		const heading = containerEl.createDiv({ cls: "nexus-settings-moc-heading" });
-		heading.draggable = true;
-		heading.dataset.mocIndex = String(index);
+		const { titleWrap, actions } = this.setupDragAndDrop(heading, index, this.plugin.settings.mocs, this.collapsedCards);
 
-		// Drag handle
-		const dragHandle = heading.createDiv({ cls: "nexus-settings-moc-drag", text: "⋮⋮" });
-		dragHandle.draggable = false;
-
-		heading.addEventListener("dragstart", (e) => {
-			this.draggedIndex = index;
-			heading.classList.add("nexus-dragging");
-			if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
-		});
-
-		heading.addEventListener("dragend", () => {
-			heading.classList.remove("nexus-dragging");
-			this.draggedIndex = null;
-		});
-
-		heading.addEventListener("dragover", (e) => {
-			e.preventDefault();
-			if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-			heading.classList.add("nexus-drag-over");
-		});
-
-		heading.addEventListener("dragleave", () => {
-			heading.classList.remove("nexus-drag-over");
-		});
-
-		heading.addEventListener("drop", async (e) => {
-			e.preventDefault();
-			heading.classList.remove("nexus-drag-over");
-			if (this.draggedIndex === null || this.draggedIndex === index) return;
-			const arr = this.plugin.settings.mocs;
-			const [moved] = arr.splice(this.draggedIndex, 1);
-			arr.splice(index, 0, moved);
-			await this.plugin.saveSettings();
-			this.display();
-		});
-
-		// Collapse arrow
-		const arrow = heading.createDiv({ cls: `nexus-settings-moc-arrow ${isCollapsed ? "collapsed" : ""}` });
-		arrow.innerHTML = SVG.chevronDown;
-
-		// Title only
-		const titleWrap = heading.createDiv({ cls: "nexus-settings-moc-title" });
+		// Title
 		titleWrap.createEl("span", { text: moc.title || "Untitled" });
 
-		// Action buttons
-		const actions = heading.createDiv({ cls: "nexus-settings-moc-actions" });
-
+		// Delete button
 		const removeBtn = actions.createEl("button", { cls: "nexus-settings-moc-btn--delete", attr: { "aria-label": "Remove" } });
 		setIcon(removeBtn, "trash");
 		removeBtn.addEventListener("click", async (e) => {
@@ -1102,9 +1659,9 @@ export class NexusSettingTab extends PluginSettingTab {
 		pre.style.lineHeight = "1";
 	}
 
-	// ── Stats row ──────────────────────────────────────────────
+	// ── Stats entry ──────────────────────────────────────────────
 
-	renderStatRow(containerEl: HTMLElement, stat: StatEntry, index: number): void {
+	renderStatEntry(containerEl: HTMLElement, stat: StatEntry, index: number): void {
 		const folders = getVaultFolders(this.app);
 		if (stat.folder && !folders.includes(stat.folder)) {
 			folders.push(stat.folder);
@@ -1193,6 +1750,61 @@ export class NexusSettingTab extends PluginSettingTab {
 				.setTooltip("Remove")
 				.onClick(async () => {
 					this.plugin.settings.quickLinks.splice(index, 1);
+					await this.plugin.saveSettings();
+					this.display();
+				})
+		);
+	}
+
+	// ── Vault List Entry ────────────────────────────────────
+
+	renderVaultListEntry(containerEl: HTMLElement, vl: VaultListEntry, index: number): void {
+		const setting = new Setting(containerEl);
+
+		setting.setName(vl.name || "Untitled");
+		setting.addText((text) =>
+			text
+				.setPlaceholder("Path")
+				.setValue(vl.path)
+				.onChange(async (value) => {
+					this.plugin.settings.vaultLists[index].path = value;
+					await this.plugin.saveSettings();
+				})
+		);
+		setting.addText((text) =>
+			text
+				.setPlaceholder("Tags")
+				.setValue(vl.tags)
+				.onChange(async (value) => {
+					this.plugin.settings.vaultLists[index].tags = value;
+					await this.plugin.saveSettings();
+				})
+		);
+		setting.addText((text) =>
+			text
+				.setPlaceholder("Count")
+				.setValue(String(vl.count))
+				.onChange(async (value) => {
+					const n = parseInt(value, 10);
+					this.plugin.settings.vaultLists[index].count = Number.isFinite(n) && n >= 1 ? n : 9;
+					await this.plugin.saveSettings();
+				})
+		);
+		setting.addToggle((toggle) =>
+			toggle
+				.setTooltip("Show divider")
+				.setValue(vl.showDivider)
+				.onChange(async (value) => {
+					this.plugin.settings.vaultLists[index].showDivider = value;
+					await this.plugin.saveSettings();
+				})
+		);
+		setting.addExtraButton((btn) =>
+			btn
+				.setIcon("trash")
+				.setTooltip("Remove")
+				.onClick(async () => {
+					this.plugin.settings.vaultLists.splice(index, 1);
 					await this.plugin.saveSettings();
 					this.display();
 				})

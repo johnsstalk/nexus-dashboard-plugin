@@ -9,7 +9,7 @@ import {
 	detectDividerPreset,
 	deepCloneDefaults,
 } from "../defaults";
-import type { NexusSettings, DividerDesign } from "../types";
+import type { DividerDesign } from "../types";
 
 describe("DEFAULT_SETTINGS", () => {
 	it("is a valid NexusSettings object", () => {
@@ -64,7 +64,7 @@ describe("DIVIDER_PRESETS", () => {
 	});
 
 	it("each preset has all required fields", () => {
-		for (const [key, preset] of Object.entries(DIVIDER_PRESETS)) {
+		for (const [, preset] of Object.entries(DIVIDER_PRESETS)) {
 			expect(typeof preset.gradient).toBe("string");
 			expect(typeof preset.lineWidth).toBe("string");
 			expect(typeof preset.labelSize).toBe("string");
