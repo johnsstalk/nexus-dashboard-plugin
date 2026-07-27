@@ -9,7 +9,12 @@ import {
 	ColumnConfig,
 	RecentlyConfig,
 	VaultListConfig,
+	VaultActivityConfig,
 	SearchConfig,
+	HeatmapConfig,
+	TimelineConfig,
+	ClockConfig,
+	FileTypeChartConfig,
 } from "./types";
 import { ensureExtension as ensureExt } from "./utils";
 
@@ -32,7 +37,7 @@ function finalizeLinkItem(partial: Partial<LinkItem>): LinkItem {
 	};
 }
 
-type ParseContext = "root" | "header" | "stats" | "divider" | "section" | "cards" | "graph" | "links" | "row" | "column" | "search" | "recently" | "vaultlist" | "section-divider";
+type ParseContext = "root" | "header" | "stats" | "divider" | "section" | "cards" | "graph" | "links" | "row" | "column" | "search" | "recently" | "vaultlist" | "vault-activity" | "section-divider" | "heatmap" | "timeline" | "clock" | "filetypes";
 
 export function parseDashboard(raw: string): DashboardConfig {
 	const trimmed = raw.trim();
@@ -63,6 +68,11 @@ export function parseDashboard(raw: string): DashboardConfig {
 	let currentSearch: SearchConfig | null = null;
 	let currentRecently: RecentlyConfig | null = null;
 	let currentVaultList: VaultListConfig | null = null;
+	let currentVaultActivity: VaultActivityConfig | null = null;
+	let currentHeatmap: HeatmapConfig | null = null;
+	let currentTimeline: TimelineConfig | null = null;
+	let currentClock: ClockConfig | null = null;
+	let currentFileTypeChart: FileTypeChartConfig | null = null;
 
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i].replace(/\r$/, "");
@@ -73,7 +83,7 @@ export function parseDashboard(raw: string): DashboardConfig {
 		// Strip YAML list prefix for known keywords (e.g. "- section:" → "section:")
 		if (t.startsWith("- ")) {
 			const stripped = t.slice(2);
-			if (/^(header|stats|graph|divider|section|links|row|column|search|recently|vaultlist):/.test(stripped)) {
+			if (/^(header|stats|graph|divider|section|links|row|column|search|recently|vaultlist|vault-activity):/.test(stripped)) {
 				t = stripped;
 			}
 		}
@@ -235,6 +245,13 @@ export function parseDashboard(raw: string): DashboardConfig {
 			currentSearch = { show: true };
 			continue;
 		}
+		if (t === "vault-activity:") {
+			flushCurrent();
+			flushColumn();
+			context = "vault-activity";
+			currentVaultActivity = { kind: "vault-activity", show: true };
+			continue;
+		}
 		if (t === "recently:" && !isRootRecentlyContext(lines, i)) {
 			flushCurrent();
 			flushColumn();
@@ -247,6 +264,34 @@ export function parseDashboard(raw: string): DashboardConfig {
 			flushColumn();
 			context = "vaultlist";
 			currentVaultList = { kind: "vaultlist", show: true };
+			continue;
+		}
+		if (t === "heatmap:") {
+			flushCurrent();
+			flushColumn();
+			context = "heatmap";
+			currentHeatmap = { kind: "heatmap", show: true };
+			continue;
+		}
+		if (t === "timeline:") {
+			flushCurrent();
+			flushColumn();
+			context = "timeline";
+			currentTimeline = { kind: "timeline", show: true };
+			continue;
+		}
+		if (t === "clock:") {
+			flushCurrent();
+			flushColumn();
+			context = "clock";
+			currentClock = { kind: "clock", show: true };
+			continue;
+		}
+		if (t === "filetypes:") {
+			flushCurrent();
+			flushColumn();
+			context = "filetypes";
+			currentFileTypeChart = { kind: "filetypes", show: true };
 			continue;
 		}
 
@@ -359,9 +404,24 @@ export function parseDashboard(raw: string): DashboardConfig {
 			case "recently":
 				if (currentRecently) applyRecentlyKV(currentRecently, kv);
 				break;
-			case "vaultlist":
-				if (currentVaultList) applyVaultListKV(currentVaultList, kv);
-				break;
+		case "vaultlist":
+			if (currentVaultList) applyVaultListKV(currentVaultList, kv);
+			break;
+		case "heatmap":
+			if (currentHeatmap) applyHeatmapKV(currentHeatmap, kv);
+			break;
+		case "timeline":
+			if (currentTimeline) applyTimelineKV(currentTimeline, kv);
+			break;
+		case "clock":
+			if (currentClock) applyClockKV(currentClock, kv);
+			break;
+		case "filetypes":
+			if (currentFileTypeChart) applyFileTypeChartKV(currentFileTypeChart, kv);
+			break;
+		case "vault-activity":
+			if (currentVaultActivity) applyVaultActivityKV(currentVaultActivity, kv);
+			break;
 		}
 	}
 
@@ -381,6 +441,11 @@ export function parseDashboard(raw: string): DashboardConfig {
 		flushSearch();
 		flushRecently();
 		flushVaultList();
+		flushVaultActivity();
+		flushHeatmap();
+		flushTimeline();
+		flushClock();
+		flushFileTypeChart();
 	}
 
 	function flushCard() {
@@ -502,6 +567,41 @@ export function parseDashboard(raw: string): DashboardConfig {
 			currentVaultList = null;
 		}
 	}
+
+	function flushVaultActivity() {
+		if (currentVaultActivity) {
+			config.blocks.push(currentVaultActivity);
+			currentVaultActivity = null;
+		}
+	}
+
+	function flushHeatmap() {
+		if (currentHeatmap) {
+			config.blocks.push(currentHeatmap);
+			currentHeatmap = null;
+		}
+	}
+
+	function flushTimeline() {
+		if (currentTimeline) {
+			config.blocks.push(currentTimeline);
+			currentTimeline = null;
+		}
+	}
+
+	function flushClock() {
+		if (currentClock) {
+			config.blocks.push(currentClock);
+			currentClock = null;
+		}
+	}
+
+	function flushFileTypeChart() {
+		if (currentFileTypeChart) {
+			config.blocks.push(currentFileTypeChart);
+			currentFileTypeChart = null;
+		}
+	}
 }
 
 // ── KV apply helpers ─────────────────────────────────────
@@ -577,6 +677,58 @@ function applyVaultListKV(vaultList: VaultListConfig, kv: { key: string; value: 
 	}
 }
 
+function applyVaultActivityKV(vaultActivity: VaultActivityConfig, kv: { key: string; value: string }) {
+	if (kv.key === "show") vaultActivity.show = kv.value === "true";
+	if (kv.key === "count") {
+		const n = parseInt(kv.value, 10);
+		vaultActivity.count = Number.isFinite(n) && n > 0 ? n : undefined;
+	}
+	if (kv.key === "path") vaultActivity.path = kv.value;
+	if (kv.key === "tags") {
+		vaultActivity.tags = kv.value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+	}
+	if (kv.key === "label") vaultActivity.label = kv.value;
+}
+
+function applyHeatmapKV(heatmap: HeatmapConfig, kv: { key: string; value: string }) {
+	if (kv.key === "show") heatmap.show = kv.value === "true";
+	if (kv.key === "weeks") {
+		const n = parseInt(kv.value, 10);
+		heatmap.weeks = Number.isFinite(n) && n > 0 ? n : undefined;
+	}
+	if (kv.key === "label") heatmap.label = kv.value;
+}
+
+function applyTimelineKV(timeline: TimelineConfig, kv: { key: string; value: string }) {
+	if (kv.key === "show") timeline.show = kv.value === "true";
+	if (kv.key === "count") {
+		const n = parseInt(kv.value, 10);
+		timeline.count = Number.isFinite(n) && n > 0 ? n : undefined;
+	}
+	if (kv.key === "label") timeline.label = kv.value;
+	if (kv.key === "exclude") {
+		timeline.exclude = kv.value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+	}
+}
+
+function applyClockKV(clock: ClockConfig, kv: { key: string; value: string }) {
+	if (kv.key === "show") clock.show = kv.value === "true";
+	if (kv.key === "timezone") clock.timezone = kv.value;
+	if (kv.key === "showDate") clock.showDate = kv.value === "true";
+	if (kv.key === "showSeconds") clock.showSeconds = kv.value === "true";
+	if (kv.key === "format") clock.format = kv.value as "12h" | "24h";
+	if (kv.key === "label") clock.label = kv.value;
+}
+
+function applyFileTypeChartKV(chart: FileTypeChartConfig, kv: { key: string; value: string }) {
+	if (kv.key === "show") chart.show = kv.value === "true";
+	if (kv.key === "max") {
+		const n = parseInt(kv.value, 10);
+		chart.max = Number.isFinite(n) && n > 0 ? n : undefined;
+	}
+	if (kv.key === "label") chart.label = kv.value;
+}
+
 // ── Recently context detection ───────────────────────────
 
 /** Determine if `recently:` at this line is the root-level boolean form */
@@ -611,11 +763,41 @@ function parseValue(line: string, prefix: string): string {
 }
 
 export function buildDefaultConfig(): DashboardConfig {
-	return {
+	const config: DashboardConfig = {
 		header: { text: "", font: "ANSI Shadow", color: "#8A5CF6", size: 1, enabled: false },
 		stats: { enabled: false, items: [] },
 		blocks: [],
 		recently: false,
 		graph: { enabled: false, exclude: [] },
 	};
+
+	// Three-column default layout:
+	// Row 1: Stats (1/3) | Search+Clock (1/3) | Quick Links (1/3)
+	// Row 2: MOCCards (1/3) | Timeline (1/3) | Heatmap (1/3)
+	// Row 3: FileTypes (1/3) | VaultActivity (1/3)
+	config.blocks.push(
+		{ kind: "row", columns: 3, proportion: "33/34/33", children: [
+			{ kind: "column", children: [
+				{ kind: "stats", config: config.stats } as StatsBlockConfig,
+			]},
+			{ kind: "column", children: [
+				{ kind: "search", config: { show: true } } as SearchBlockConfig,
+			]},
+			{ kind: "column", children: [
+				{ kind: "links", items: [], columns: 1 } as LinksConfig,
+			]},
+		]},
+		{ kind: "row", columns: 3, proportion: "33/34/33", children: [
+			{ kind: "column", children: [] },
+			{ kind: "column", children: [] },
+			{ kind: "column", children: [] },
+		]},
+		{ kind: "row", columns: 3, proportion: "33/34/33", children: [
+			{ kind: "column", children: [] },
+			{ kind: "column", children: [] },
+			{ kind: "column", children: [] },
+		]},
+	);
+
+	return config;
 }

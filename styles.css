@@ -37,41 +37,40 @@
 
 .nexus-stats {
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   align-items: center;
-  gap: 10px;
-  padding: 4px 0 8px 0;
-  flex-wrap: nowrap;
+  gap: 8px;
+  padding: 6px 0;
+  flex-wrap: wrap;
+  width: 100%;
 }
 
 .nexus-stat-card {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 14px;
+  padding: 8px 14px;
   background: var(--background-secondary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
+  border: none;
+  border-radius: 6px;
   white-space: nowrap;
-  transition: border-color 0.18s ease, background 0.18s ease;
-}
-
-.nexus-stat-card:hover {
-  border-color: var(--interactive-accent);
-  background: var(--background-modifier-hover);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: center;
 }
 
 .nexus-stat-num {
-  font-size: 0.88rem;
+  font-size: 0.85rem;
   font-weight: 700;
   color: var(--interactive-accent);
   line-height: 1;
 }
 
 .nexus-stat-label {
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   font-weight: 500;
-  color: var(--text-muted);
+  color: var(--text-faint);
   line-height: 1;
 }
 
@@ -111,7 +110,7 @@
   transform: translateY(-2px);
   border-color: var(--interactive-accent);
   background: var(--background-modifier-hover);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 4px 16px var(--background-modifier-box-shadow, rgba(0, 0, 0, 0.06));
 }
 
 /* ── Shine Sweep ───────────────────────────────────────────── */
@@ -125,9 +124,10 @@
   background: linear-gradient(
     90deg,
     transparent,
-    rgba(255, 255, 255, 0.08),
+    var(--text-accent, rgba(255, 255, 255, 0.04)),
     transparent
   );
+  opacity: 0.3;
   transition: left 0.6s ease;
   pointer-events: none;
 }
@@ -246,7 +246,7 @@
   transform: translateY(-2px);
   border-color: var(--interactive-accent);
   background: var(--background-modifier-hover);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 4px 16px var(--background-modifier-box-shadow, rgba(0, 0, 0, 0.06));
 }
 
 .nexus-card-mini:active {
@@ -264,9 +264,10 @@
   background: linear-gradient(
     90deg,
     transparent,
-    rgba(255, 255, 255, 0.08),
+    var(--text-accent, rgba(255, 255, 255, 0.04)),
     transparent
   );
+  opacity: 0.3;
   transition: left 0.6s ease;
   pointer-events: none;
 }
@@ -833,6 +834,9 @@
 .nexus-row-col {
   flex: 1 1 0;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
 }
 
 .nexus-row-col[style*="--nexus-row-width"] {
@@ -982,7 +986,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 14px;
+  padding: 10px 12px;
   background: var(--background-secondary);
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
@@ -998,36 +1002,44 @@
   background: var(--background-modifier-hover);
 }
 
-.nexus-link-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  background: var(--background-primary);
-  border: 1px solid var(--background-modifier-border);
+.nexus-link-item:visited {
+  color: var(--text-normal) !important;
+}
+
+.nexus-link-favicon {
+  width: 20px;
+  height: 20px;
   flex-shrink: 0;
-  color: var(--text-muted);
+  border-radius: 3px;
+  object-fit: contain;
 }
 
-.nexus-link-icon svg {
-  width: 16px;
-  height: 16px;
+.nexus-link-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
 }
 
-.nexus-link-item:hover .nexus-link-icon {
-  color: var(--interactive-accent);
-  border-color: var(--interactive-accent);
+.nexus-links-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .nexus-link-label {
-  font-size: 0.8rem;
+  font-size: var(--font-ui-small);
   font-weight: 500;
   color: var(--text-normal);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  transition: color 0.15s ease;
+}
+
+.nexus-link-item:hover .nexus-link-label {
+  color: var(--interactive-accent);
 }
 
 .nexus-link-desc {
@@ -1044,28 +1056,79 @@
 
 .nexus-search {
   position: relative;
-  margin-bottom: 1.5rem;
+  margin-bottom: 0;
+  width: 100%;
+}
+
+.nexus-search-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
 }
 
 .nexus-search-input {
   width: 100%;
-  padding: 10px 14px;
+  box-sizing: border-box;
+  padding: 6px 28px 6px 10px;
   border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--background-secondary);
   color: var(--text-normal);
-  font-size: 0.88rem;
+  font-size: 0.78rem;
   font-family: inherit;
-  transition: border-color 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .nexus-search-input:focus {
   border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 15%, transparent);
   outline: none;
 }
 
 .nexus-search-input::placeholder {
   color: var(--text-muted);
+}
+
+.nexus-search-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  font-size: 0.6rem;
+  cursor: pointer;
+  line-height: 1;
+  transition: background 0.12s ease;
+}
+
+.nexus-search-clear:hover {
+  background: var(--text-muted);
+  color: var(--background-primary);
+}
+
+.nexus-search-clear.visible {
+  display: flex;
+}
+
+.nexus-search-count {
+  font-size: 0.65rem;
+  color: var(--text-faint);
+  margin-top: 4px;
+  min-height: 1em;
+}
+
+.nexus-search-no-results {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  padding: 8px 0;
+  text-align: center;
 }
 
 .nexus-search-results {
@@ -1078,7 +1141,7 @@
   overflow-y: auto;
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
+  border-radius: 6px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
   margin-top: 4px;
 }
@@ -1087,9 +1150,9 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 10px 14px;
+  padding: 7px 10px;
   cursor: pointer;
-  transition: background 0.12s ease;
+  transition: background 0.1s ease;
   border-bottom: 1px solid var(--background-modifier-border);
 }
 
@@ -1097,19 +1160,38 @@
   border-bottom: none;
 }
 
-.nexus-search-result:hover {
+.nexus-search-result:hover,
+.nexus-search-result.selected {
   background: var(--background-modifier-hover);
 }
 
+.nexus-search-result.selected {
+  outline: 1px solid var(--interactive-accent);
+  outline-offset: -1px;
+}
+
 .nexus-search-result-name {
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   font-weight: 500;
   color: var(--text-normal);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nexus-search-result-name mark {
+  background: color-mix(in srgb, var(--interactive-accent) 25%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
 }
 
 .nexus-search-result-path {
-  font-size: 0.7rem;
-  color: var(--text-muted);
+  font-size: 0.65rem;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ============================================================
@@ -1273,4 +1355,350 @@
     grid-template-columns: 1fr;
   }
 
+}
+
+/* ============================================================
+   Nexus Heatmap — GitHub-style contribution calendar
+   ============================================================ */
+
+.nexus-heatmap {
+  margin-top: 0.5rem;
+}
+
+.nexus-heatmap-months {
+  display: grid;
+  grid-template-columns: 30px repeat(var(--nexus-heatmap-weeks, 20), 1fr);
+  gap: 2px;
+  margin-bottom: 2px;
+}
+
+.nexus-heatmap-month-spacer {
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  line-height: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.nexus-heatmap-body {
+  display: flex;
+  gap: 4px;
+}
+
+.nexus-heatmap-days {
+  display: grid;
+  grid-template-rows: repeat(7, 1fr);
+  gap: 2px;
+  width: 28px;
+}
+
+.nexus-heatmap-day-label {
+  font-size: 0.55rem;
+  color: var(--text-faint);
+  line-height: 12px;
+  text-align: right;
+  padding-right: 4px;
+}
+
+.nexus-heatmap-grid {
+  display: grid;
+  grid-template-rows: repeat(7, 1fr);
+  gap: 2px;
+  flex: 1;
+}
+
+.nexus-heatmap-cell {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 2px;
+  min-width: 8px;
+  min-height: 8px;
+  transition: outline 0.1s ease;
+}
+
+.nexus-heatmap-cell:hover {
+  outline: 1px solid var(--text-muted);
+  outline-offset: 1px;
+}
+
+.nexus-heatmap-cell-empty {
+  background: var(--background-secondary);
+  opacity: 0.3;
+}
+
+.nexus-heatmap-cell-level-0 {
+  background: var(--background-secondary);
+}
+
+.nexus-heatmap-cell-level-1 {
+  background: color-mix(in srgb, var(--interactive-accent) 15%, transparent);
+}
+
+.nexus-heatmap-cell-level-2 {
+  background: color-mix(in srgb, var(--interactive-accent) 35%, transparent);
+}
+
+.nexus-heatmap-cell-level-3 {
+  background: color-mix(in srgb, var(--interactive-accent) 55%, transparent);
+}
+
+.nexus-heatmap-cell-level-4 {
+  background: color-mix(in srgb, var(--interactive-accent) 75%, transparent);
+}
+
+.nexus-heatmap-cell-level-5 {
+  background: var(--interactive-accent);
+}
+
+.nexus-heatmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.nexus-heatmap-legend-label {
+  font-size: 0.55rem;
+  color: var(--text-faint);
+  margin: 0 2px;
+}
+
+/* ============================================================
+   Nexus Timeline — Terminal-style activity log
+   ============================================================ */
+
+.nexus-timeline {
+  font-family: "JetBrains Mono NL", "Fira Code", "Cascadia Code", monospace;
+  font-size: 0.72rem;
+  line-height: 1.7;
+  margin-top: 0.5rem;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.nexus-timeline-row {
+  display: flex;
+  gap: 0;
+  padding: 1px 0;
+  cursor: pointer;
+  transition: background 0.1s ease;
+  border-radius: 3px;
+}
+
+.nexus-timeline-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+.nexus-timeline-time {
+  color: var(--text-faint);
+  min-width: 42px;
+  flex-shrink: 0;
+}
+
+.nexus-timeline-action {
+  min-width: 72px;
+  flex-shrink: 0;
+  font-weight: 500;
+}
+
+.nexus-timeline-action--created {
+  color: var(--text-success);
+}
+
+.nexus-timeline-action--modified {
+  color: var(--interactive-accent);
+}
+
+.nexus-timeline-action--deleted {
+  color: var(--text-error);
+}
+
+.nexus-timeline-action--moved {
+  color: var(--text-warning);
+}
+
+.nexus-timeline-path {
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   Nexus Vault Activity — Compact file list
+   ============================================================ */
+
+.nexus-vault-activity {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 0.5rem;
+}
+
+.nexus-vault-activity-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 6px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.1s ease;
+}
+
+.nexus-vault-activity-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+.nexus-vault-activity-name {
+  font-weight: 500;
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+
+.nexus-vault-activity-path {
+  font-size: 0.7rem;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.nexus-vault-activity-time {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   Nexus Clock — Real-time digital clock
+   ============================================================ */
+
+.nexus-clock {
+  text-align: center;
+  padding: 8px 0;
+}
+
+.nexus-clock-time {
+  font-size: 2.2rem;
+  font-weight: 700;
+  color: var(--text-normal);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.nexus-clock-date {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+  font-weight: 500;
+}
+
+/* ============================================================
+   Nexus File Types — Horizontal bar chart
+   ============================================================ */
+
+.nexus-filetypes {
+  margin-top: 0.5rem;
+}
+
+.nexus-filetypes-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.nexus-filetypes-ext {
+  font-family: "JetBrains Mono NL", "Fira Code", monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-normal);
+  min-width: 52px;
+  text-align: right;
+}
+
+.nexus-filetypes-count {
+  font-family: "JetBrains Mono NL", "Fira Code", monospace;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  min-width: 32px;
+  text-align: right;
+}
+
+.nexus-filetypes-bar-track {
+  flex: 1;
+  height: 10px;
+  background: var(--background-secondary);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.nexus-filetypes-bar-fill {
+  height: 100%;
+  background: var(--interactive-accent);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+  opacity: 0.8;
+}
+
+.nexus-filetypes-row:nth-child(1) .nexus-filetypes-bar-fill { opacity: 1; }
+.nexus-filetypes-row:nth-child(2) .nexus-filetypes-bar-fill { opacity: 0.85; }
+.nexus-filetypes-row:nth-child(3) .nexus-filetypes-bar-fill { opacity: 0.7; }
+.nexus-filetypes-row:nth-child(4) .nexus-filetypes-bar-fill { opacity: 0.55; }
+.nexus-filetypes-row:nth-child(5) .nexus-filetypes-bar-fill { opacity: 0.4; }
+
+.nexus-filetypes-pct {
+  font-size: 0.68rem;
+  color: var(--text-faint);
+  min-width: 30px;
+  text-align: right;
+}
+
+/* ============================================================
+   Mobile Responsive — New components
+   ============================================================ */
+
+@media (max-width: 600px) {
+  .nexus-clock-time {
+    font-size: 1.6rem;
+  }
+
+  .nexus-clock-date {
+    font-size: 0.72rem;
+  }
+
+  .nexus-timeline {
+    font-size: 0.65rem;
+  }
+
+  .nexus-timeline-action {
+    min-width: 60px;
+  }
+
+  .nexus-heatmap-months {
+    grid-template-columns: 28px repeat(var(--nexus-heatmap-weeks, 20), 1fr);
+  }
+
+  .nexus-heatmap-day-label {
+    font-size: 0.5rem;
+  }
+
+  .nexus-filetypes-ext {
+    min-width: 40px;
+    font-size: 0.65rem;
+  }
+
+  .nexus-filetypes-count {
+    font-size: 0.65rem;
+  }
 }

@@ -1,4 +1,4 @@
-import { MarkdownRenderChild, Menu, Notice, TFile } from "obsidian";
+import { MarkdownRenderChild, Menu, Notice, TFile, TAbstractFile, type EventRef } from "obsidian";
 import type NexusDashboardPlugin from "./main";
 import { DIVIDER_PRESETS } from "./defaults";
 import { SMALL_ICONS, ICONS, DEFAULT_ICON } from "./icons";
@@ -20,8 +20,13 @@ import {
 	ColumnConfig,
 	RecentlyConfig,
 	VaultListConfig,
+	VaultActivityConfig,
 	SearchConfig,
 	ContentSlotType,
+	HeatmapConfig,
+	TimelineConfig,
+	ClockConfig,
+	FileTypeChartConfig,
 } from "./types";
 
 export class NexusRenderer extends MarkdownRenderChild {
@@ -31,6 +36,9 @@ export class NexusRenderer extends MarkdownRenderChild {
 	private rendering = false;
 	private renderQueued = false;
 	private searchAbortController: AbortController | null = null;
+	private clockInterval: ReturnType<typeof setInterval> | null = null;
+	private timelineEvents: Array<{ time: number; action: "created" | "modified" | "deleted" | "moved"; path: string; oldPath?: string }> = [];
+	private vaultEventRefs: EventRef[] = [];
 
 	constructor(containerEl: HTMLElement, plugin: NexusDashboardPlugin, source: string, sourcePath: string) {
 		super(containerEl);
@@ -50,6 +58,14 @@ export class NexusRenderer extends MarkdownRenderChild {
 			this.searchAbortController.abort();
 			this.searchAbortController = null;
 		}
+		if (this.clockInterval) {
+			clearInterval(this.clockInterval);
+			this.clockInterval = null;
+		}
+		for (const ref of this.vaultEventRefs) {
+			this.plugin.app.vault.offref(ref);
+		}
+		this.vaultEventRefs = [];
 	}
 
 	async render(): Promise<void> {
@@ -84,6 +100,10 @@ export class NexusRenderer extends MarkdownRenderChild {
 			config = baseConfig;
 		}
 
+		// Scan blocks recursively for search/stats placed inside rows/columns
+		// so the top-level fallback doesn't also render them
+		this.scanBlocksForPlaced(config.blocks, placed);
+
 		// ── Header ────────────────────────────────────────
 		if (config.header.enabled) {
 			this.renderHeader(containerEl, config.header);
@@ -106,19 +126,6 @@ export class NexusRenderer extends MarkdownRenderChild {
 			} catch (err) {
 				console.error("[NEXUS RENDER ERROR] block render failed:", err);
 			}
-		}
-
-		// ── Recently modified (root-level boolean) ────────
-		if (config.recently === true) {
-			const recentConfig: RecentlyConfig = {
-				kind: "recently",
-				show: true,
-				path: this.plugin.settings.recentPath || undefined,
-				tags: this.plugin.settings.recentTags
-					? this.plugin.settings.recentTags.split(",").map((s) => s.trim()).filter((s) => s.length > 0)
-					: undefined,
-			};
-			await this.renderRecentlyModified(containerEl, recentConfig);
 		}
 
 		// ── Graph links (metadataCache injection) ─────────
@@ -147,11 +154,14 @@ export class NexusRenderer extends MarkdownRenderChild {
 			this.renderColumn(containerEl, block, config);
 				break;
 			case "recently":
-				await this.renderRecentlyModified(containerEl, block);
-				break;
-			case "vaultlist":
-				await this.renderVaultList(containerEl, block);
-				break;
+			await this.renderVaultActivity(containerEl, block);
+			break;
+		case "vaultlist":
+			await this.renderVaultActivity(containerEl, block);
+			break;
+		case "vault-activity":
+			await this.renderVaultActivity(containerEl, block);
+			break;
 		case "stats":
 				this.renderStatsBar(containerEl, block.config);
 				break;
@@ -160,6 +170,18 @@ export class NexusRenderer extends MarkdownRenderChild {
 				break;
 			case "heading":
 				this.renderHeading(containerEl, block.config, config);
+				break;
+			case "heatmap":
+				this.renderHeatmap(containerEl, block);
+				break;
+			case "timeline":
+				this.renderTimeline(containerEl, block);
+				break;
+			case "clock":
+				this.renderClock(containerEl, block);
+				break;
+			case "filetypes":
+				this.renderFileTypeChart(containerEl, block);
 				break;
 		}
 	}
@@ -190,7 +212,12 @@ export class NexusRenderer extends MarkdownRenderChild {
 			source.includes("links:") ||
 			source.includes("row:") ||
 			source.includes("column:") ||
-			source.includes("vaultlist:");
+			source.includes("vaultlist:") ||
+			source.includes("vault-activity:") ||
+			source.includes("heatmap:") ||
+			source.includes("timeline:") ||
+			source.includes("clock:") ||
+			source.includes("filetypes:");
 		if (hasBlocks) {
 			merged.blocks = override.blocks;
 		} else {
@@ -267,6 +294,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 								path: moc.path,
 								icon: moc.icon,
 							})),
+							divider: opts.showMocDivider ? { kind: "divider", title: opts.mocDividerLabel || "MOC CARDS" } : undefined,
 						};
 					}
 					return null;
@@ -276,7 +304,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 						return {
 							kind: "links",
 							title: opts.showQuickLinksDivider ? opts.quickLinksDividerLabel || "Quick Links" : undefined,
-							columns: 3,
+							columns: 1,
 							items: opts.quickLinks.map((link) => ({
 								url: link.url,
 								label: link.label,
@@ -285,22 +313,23 @@ export class NexusRenderer extends MarkdownRenderChild {
 						} as LinksConfig;
 					}
 					return null;
-				case "recently":
-					placed.add("recently");
-					return { kind: "recently", show: true, count: opts.recentCount } as RecentlyConfig;
-				case "vaultlist": {
-					const vlEntry = vaultListName ? opts.vaultLists.find((v) => v.name === vaultListName) : undefined;
-					if (vlEntry) {
-						placed.add("vaultlist");
-						return {
-							kind: "vaultlist",
-							show: true,
-							count: vlEntry.count || opts.recentCount,
-							path: vlEntry.path || undefined,
-							tags: vlEntry.tags ? vlEntry.tags.split(",").map((t: string) => t.trim()).filter((t: string) => t.length > 0) : undefined,
-							showDivider: vlEntry.showDivider !== false,
-						} as VaultListConfig;
+				case "vault-activity": {
+					placed.add("vault-activity");
+					// If a vault list name is specified, look it up
+					if (vaultListName) {
+						const vlEntry = opts.vaultLists.find((v) => v.name === vaultListName);
+						if (vlEntry) {
+							return {
+								kind: "vault-activity",
+								show: true,
+								count: vlEntry.count || opts.vaultActivityCount,
+								path: vlEntry.path || undefined,
+								tags: vlEntry.tags ? vlEntry.tags.split(",").map((t: string) => t.trim()).filter((t: string) => t.length > 0) : undefined,
+								label: vlEntry.name,
+							} as VaultActivityConfig;
+						}
 					}
+					// No vault list selected - render nothing
 					return null;
 				}
 			case "divider":
@@ -311,7 +340,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 					cards: [],
 					divider: {
 						kind: "divider",
-						title: dividerLabel || opts.dividerLabel || "",
+						title: dividerLabel || "",
 						type: "custom",
 					},
 				};
@@ -324,12 +353,31 @@ export class NexusRenderer extends MarkdownRenderChild {
 				case "heading":
 					placed.add("heading");
 					return { kind: "heading", config: headingOverride || { text: "Section" } };
+				case "heatmap":
+					placed.add("heatmap");
+					return { kind: "heatmap", show: true, weeks: opts.heatmapWeeks, label: opts.heatmapLabel } as HeatmapConfig;
+				case "timeline":
+					placed.add("timeline");
+					return { kind: "timeline", show: true, count: opts.activityTimelineCount, label: opts.activityTimelineLabel } as TimelineConfig;
+				case "clock":
+					placed.add("clock");
+					return { kind: "clock", show: true, timezone: opts.clockTimezone, showDate: opts.clockShowDate, showSeconds: opts.clockShowSeconds, format: opts.clockFormat, label: opts.clockLabel } as ClockConfig;
+				case "filetypes":
+					placed.add("filetypes");
+					return { kind: "filetypes", show: true, max: opts.fileTypeChartMax, label: opts.fileTypeChartLabel } as FileTypeChartConfig;
 				default:
 					return null;
 			}
 		};
 
 		// ── Build layout blocks from row/column layouts ──
+
+		// If user has custom row or column layouts, clear the default blocks
+		// to prevent components from rendering both in slots AND in defaults
+		const hasUserLayouts = (opts.rowLayouts && opts.rowLayouts.length > 0) || (opts.columnLayouts && opts.columnLayouts.length > 0);
+		if (hasUserLayouts) {
+			config.blocks = [];
+		}
 
 		if (opts.rowLayouts && opts.rowLayouts.length > 0) {
 			for (const rowLayout of opts.rowLayouts) {
@@ -422,6 +470,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 					path: moc.path,
 					icon: moc.icon,
 				})),
+				divider: opts.showMocDivider ? { kind: "divider", title: opts.mocDividerLabel || "MOC CARDS" } : undefined,
 			});
 		}
 
@@ -438,11 +487,44 @@ export class NexusRenderer extends MarkdownRenderChild {
 			});
 		}
 
-		if (!placed.has("recently") && opts.showRecently) {
-			config.blocks.push({ kind: "recently", show: true, count: opts.recentCount });
+		if (!placed.has("heatmap") && opts.showHeatmap) {
+			config.blocks.push({ kind: "heatmap", show: true, weeks: opts.heatmapWeeks, label: opts.heatmapLabel });
+		}
+
+		if (!placed.has("timeline") && opts.showActivityTimeline) {
+			config.blocks.push({ kind: "timeline", show: true, count: opts.activityTimelineCount, label: opts.activityTimelineLabel });
+		}
+
+		if (!placed.has("clock") && opts.showClock) {
+			config.blocks.push({ kind: "clock", show: true, timezone: opts.clockTimezone, showDate: opts.clockShowDate, showSeconds: opts.clockShowSeconds, format: opts.clockFormat, label: opts.clockLabel });
+		}
+
+		if (!placed.has("filetypes") && opts.showFileTypeChart) {
+			config.blocks.push({ kind: "filetypes", show: true, max: opts.fileTypeChartMax, label: opts.fileTypeChartLabel });
 		}
 
 		return { config, placed };
+	}
+
+	// ── Scan blocks recursively for search/stats placed inside rows/columns ──
+
+	private scanBlocksForPlaced(
+		blocks: DashboardConfig["blocks"],
+		placed: Set<string>
+	): void {
+		for (const block of blocks) {
+			if (block.kind === "stats") placed.add("stats");
+			if (block.kind === "search") placed.add("search");
+			if ("children" in block && Array.isArray((block as any).children)) {
+				this.scanBlocksForPlaced((block as any).children, placed);
+			}
+			if ("cards" in block && Array.isArray((block as any).cards)) {
+				for (const card of (block as any).cards) {
+					if (card.kind === "stats") placed.add("stats");
+					if (card.kind === "search") placed.add("search");
+				}
+			}
+		}
 	}
 
 	// ── Render: Header ─────────────────────────────────────────
@@ -544,28 +626,34 @@ export class NexusRenderer extends MarkdownRenderChild {
 			this.renderDivider(wrapper, links.title);
 		}
 
-		const cols = links.columns || 3;
-		const gridEl = wrapper.createDiv({ cls: `nexus-links-grid nexus-links-grid--cols-${cols}` });
+		const listEl = wrapper.createDiv({ cls: "nexus-links-list" });
 
 		for (const item of links.items) {
-			const itemEl = gridEl.createEl("a", { cls: "nexus-link-item" });
+			const itemEl = listEl.createEl("a", { cls: "nexus-link-item" });
 			itemEl.href = item.url;
 			itemEl.target = "_blank";
 			itemEl.rel = "noopener";
 
-			// Icon
-			const iconName = item.icon || "Link";
-			const svg = SMALL_ICONS[iconName] || SMALL_ICONS["Link"] || DEFAULT_ICON;
-			const iconEl = itemEl.createDiv({ cls: "nexus-link-icon" });
-			iconEl.innerHTML = svg;
+			// Favicon
+			try {
+				const domain = new URL(item.url).hostname;
+				const faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
+				const faviconEl = itemEl.createEl("img", {
+					cls: "nexus-link-favicon",
+					attr: { src: faviconUrl, alt: "", loading: "lazy" },
+				});
+				faviconEl.onerror = () => faviconEl.remove();
+			} catch {
+				// Invalid URL, skip favicon
+			}
 
-			// Label
-			const label = item.label || new URL(item.url).hostname || item.url;
-			itemEl.createEl("span", { text: label, cls: "nexus-link-label" });
+			// Text content
+			const textEl = itemEl.createDiv({ cls: "nexus-link-text" });
+			const label = item.label || item.url;
+			textEl.createEl("span", { text: label, cls: "nexus-link-label" });
 
-			// Optional description
 			if (item.desc) {
-				itemEl.createEl("span", { text: item.desc, cls: "nexus-link-desc" });
+				textEl.createEl("span", { text: item.desc, cls: "nexus-link-desc" });
 			}
 		}
 	}
@@ -646,7 +734,10 @@ export class NexusRenderer extends MarkdownRenderChild {
 
 	private renderSearchBar(containerEl: HTMLElement, search: SearchConfig): void {
 		const wrapper = containerEl.createDiv({ cls: "nexus-search" });
-		const input = wrapper.createEl("input", {
+
+		// Input + clear button wrapper
+		const inputWrap = wrapper.createDiv({ cls: "nexus-search-input-wrap" });
+		const input = inputWrap.createEl("input", {
 			cls: "nexus-search-input",
 			attr: {
 				type: "text",
@@ -654,59 +745,149 @@ export class NexusRenderer extends MarkdownRenderChild {
 			},
 		});
 
+		const clearBtn = inputWrap.createSpan({ cls: "nexus-search-clear", text: "\u2715" });
+		clearBtn.addEventListener("click", () => {
+			input.value = "";
+			clearBtn.classList.remove("visible");
+			countEl.textContent = "";
+			resultsEl.style.display = "none";
+			resultsEl.empty();
+			selectedIndex = -1;
+			input.focus();
+		});
+
+		// Count / no-results text
+		const countEl = wrapper.createDiv({ cls: "nexus-search-count" });
+
+		// Results dropdown
 		const resultsEl = wrapper.createDiv({ cls: "nexus-search-results" });
 		resultsEl.style.display = "none";
 
 		let debounceTimer: ReturnType<typeof setTimeout>;
+		let selectedIndex = -1;
+		let currentMatches: any[] = [];
+
+		const highlightMatch = (text: string, query: string): string => {
+			if (!query) return this.escapeHtml(text);
+			const idx = text.toLowerCase().indexOf(query.toLowerCase());
+			if (idx === -1) return this.escapeHtml(text);
+			const before = text.slice(0, idx);
+			const match = text.slice(idx, idx + query.length);
+			const after = text.slice(idx + query.length);
+			return `${this.escapeHtml(before)}<mark>${this.escapeHtml(match)}</mark>${this.escapeHtml(after)}`;
+		};
+
+		const updateSelection = () => {
+			const items = resultsEl.querySelectorAll(".nexus-search-result");
+			items.forEach((el, i) => {
+				el.classList.toggle("selected", i === selectedIndex);
+			});
+			if (selectedIndex >= 0 && items[selectedIndex]) {
+				(items[selectedIndex] as HTMLElement).scrollIntoView({ block: "nearest" });
+			}
+		};
+
+		const openSelected = () => {
+			if (selectedIndex >= 0 && selectedIndex < currentMatches.length) {
+				const file = currentMatches[selectedIndex];
+				this.plugin.app.workspace.openLinkText(file.path, "", false);
+				input.value = "";
+				clearBtn.classList.remove("visible");
+				countEl.textContent = "";
+				resultsEl.style.display = "none";
+				resultsEl.empty();
+				selectedIndex = -1;
+				currentMatches = [];
+			}
+		};
+
+		const renderResults = (query: string) => {
+			const files = this.plugin.app.vault.getMarkdownFiles();
+			currentMatches = files
+				.filter((f) => f.basename.toLowerCase().includes(query) || f.path.toLowerCase().includes(query))
+				.slice(0, 10);
+
+			resultsEl.empty();
+			selectedIndex = -1;
+
+			if (currentMatches.length === 0) {
+				resultsEl.style.display = "none";
+				countEl.createDiv({ cls: "nexus-search-no-results", text: "No results found" });
+				return;
+			}
+
+			countEl.textContent = `${currentMatches.length} result${currentMatches.length !== 1 ? "s" : ""}`;
+			resultsEl.style.display = "block";
+
+			for (const file of currentMatches) {
+				const resultEl = resultsEl.createDiv({ cls: "nexus-search-result" });
+				const nameEl = resultEl.createEl("span", { cls: "nexus-search-result-name" });
+				nameEl.innerHTML = highlightMatch(file.basename, query);
+				const pathEl = resultEl.createEl("span", { text: file.path, cls: "nexus-search-result-path" });
+
+				const openFile = () => {
+					this.plugin.app.workspace.openLinkText(file.path, "", false);
+					input.value = "";
+					clearBtn.classList.remove("visible");
+					countEl.textContent = "";
+					resultsEl.style.display = "none";
+					resultsEl.empty();
+					selectedIndex = -1;
+					currentMatches = [];
+				};
+
+				resultEl.addEventListener("click", openFile);
+				nameEl.addEventListener("click", openFile);
+				pathEl.addEventListener("click", openFile);
+			}
+		};
 
 		input.addEventListener("input", () => {
+			const hasText = input.value.length > 0;
+			clearBtn.classList.toggle("visible", hasText);
+
 			clearTimeout(debounceTimer);
 			debounceTimer = setTimeout(() => {
 				const query = input.value.trim().toLowerCase();
+				countEl.textContent = "";
 				if (query.length < 2) {
 					resultsEl.style.display = "none";
 					resultsEl.empty();
+					currentMatches = [];
+					selectedIndex = -1;
 					return;
 				}
-
-				const files = this.plugin.app.vault.getMarkdownFiles();
-				const matches = files
-					.filter((f) => f.basename.toLowerCase().includes(query) || f.path.toLowerCase().includes(query))
-					.slice(0, 10);
-
-				resultsEl.empty();
-				if (matches.length === 0) {
-					resultsEl.style.display = "none";
-					return;
-				}
-
-				resultsEl.style.display = "block";
-				for (const file of matches) {
-					const resultEl = resultsEl.createDiv({ cls: "nexus-search-result" });
-					const nameEl = resultEl.createEl("span", { text: file.basename, cls: "nexus-search-result-name" });
-					const pathEl = resultEl.createEl("span", { text: file.path, cls: "nexus-search-result-path" });
-
-					const openFile = () => {
-						this.plugin.app.workspace.openLinkText(file.path, "", false);
-						input.value = "";
-						resultsEl.style.display = "none";
-						resultsEl.empty();
-					};
-
-					resultEl.addEventListener("click", openFile);
-					nameEl.addEventListener("click", openFile);
-					pathEl.addEventListener("click", openFile);
-				}
+				renderResults(query);
 			}, 200);
 		});
 
-		// Close on escape or outside click
+		// Keyboard navigation
 		input.addEventListener("keydown", (e) => {
+			const isOpen = resultsEl.style.display === "block";
 			if (e.key === "Escape") {
 				input.value = "";
+				clearBtn.classList.remove("visible");
+				countEl.textContent = "";
 				resultsEl.style.display = "none";
 				resultsEl.empty();
+				selectedIndex = -1;
+				currentMatches = [];
 				input.blur();
+				return;
+			}
+			if (!isOpen) return;
+
+			if (e.key === "ArrowDown") {
+				e.preventDefault();
+				selectedIndex = Math.min(selectedIndex + 1, currentMatches.length - 1);
+				updateSelection();
+			} else if (e.key === "ArrowUp") {
+				e.preventDefault();
+				selectedIndex = Math.max(selectedIndex - 1, 0);
+				updateSelection();
+			} else if (e.key === "Enter") {
+				e.preventDefault();
+				openSelected();
 			}
 		});
 
@@ -720,8 +901,18 @@ export class NexusRenderer extends MarkdownRenderChild {
 			if (!wrapper.contains(e.target as Node)) {
 				resultsEl.style.display = "none";
 				resultsEl.empty();
+				selectedIndex = -1;
+				currentMatches = [];
 			}
 		}, { signal });
+	}
+
+	// ── Shared helpers ────────────────────────────────────────
+
+	private escapeHtml(text: string): string {
+		const div = document.createElement("div");
+		div.textContent = text;
+		return div.innerHTML;
 	}
 
 	// ── Shared file filtering + card rendering helpers ──────────
@@ -790,36 +981,408 @@ export class NexusRenderer extends MarkdownRenderChild {
 		}
 	}
 
-	// ── Render: Recently Modified ──────────────────────────────
+	// ── Render: Vault Activity ─────────────────────────────────
 
-	private async renderRecentlyModified(containerEl: HTMLElement, config: RecentlyConfig): Promise<void> {
+	private async renderVaultActivity(containerEl: HTMLElement, config: RecentlyConfig | VaultListConfig | VaultActivityConfig): Promise<void> {
 		const opts = this.plugin.settings;
-		const files = this.getFilteredFiles(config, opts.recentCount ?? 9);
+		const filterConfig = { path: config.path, tags: config.tags, count: config.count };
+		const files = this.getFilteredFiles(filterConfig, config.count ?? opts.vaultActivityCount ?? 9);
 		if (files.length === 0) return;
 
 		const wrapperEl = containerEl.createDiv({ cls: "nexus-section" });
-		this.renderDivider(wrapperEl, opts.dividerLabel || "Recently Modified");
 
-		const gridEl = wrapperEl.createDiv({ cls: "nexus-mini-grid" });
-		gridEl.style.setProperty("--nexus-mini-columns", String(opts.miniGridColumns));
-		this.renderFileCards(gridEl, files);
-	}
-
-	// ── Render: Vault List ─────────────────────────────────────
-
-	private async renderVaultList(containerEl: HTMLElement, config: VaultListConfig): Promise<void> {
-		const opts = this.plugin.settings;
-		const files = this.getFilteredFiles(config, 9);
-		if (files.length === 0) return;
-
-		const wrapperEl = containerEl.createDiv({ cls: "nexus-section" });
-		if (config.showDivider !== false) {
-			this.renderDivider(wrapperEl, config.path || "Vault List");
+		// Determine label
+		let label: string | undefined;
+		if (config.kind === "vault-activity") {
+			label = config.label || opts.vaultActivityLabel || "VAULT ACTIVITY";
+		} else if (config.kind === "vaultlist") {
+			label = config.path || "Vault List";
+		} else {
+			label = "Recently Modified";
 		}
 
-		const gridEl = wrapperEl.createDiv({ cls: "nexus-mini-grid" });
-		gridEl.style.setProperty("--nexus-mini-columns", String(opts.miniGridColumns));
-		this.renderFileCards(gridEl, files);
+		if (label) {
+			this.renderDivider(wrapperEl, label);
+		}
+
+		// Compact file list
+		const listEl = wrapperEl.createDiv({ cls: "nexus-vault-activity" });
+
+		const relativeTime = (mtime: number): string => {
+			const now = Date.now();
+			const diff = now - mtime;
+			const seconds = Math.floor(diff / 1000);
+			if (seconds < 60) return "just now";
+			const minutes = Math.floor(seconds / 60);
+			if (minutes < 60) return `${minutes}m ago`;
+			const hours = Math.floor(minutes / 60);
+			if (hours < 24) return `${hours}h ago`;
+			const days = Math.floor(hours / 24);
+			if (days < 30) return `${days}d ago`;
+			const months = Math.floor(days / 30);
+			return `${months}mo ago`;
+		};
+
+		for (const file of files) {
+			const row = listEl.createDiv({ cls: "nexus-vault-activity-row" });
+
+			const nameEl = row.createEl("span", {
+				text: file.basename,
+				cls: "nexus-vault-activity-name",
+			});
+
+			const pathParts = file.path.split("/");
+			const folder = pathParts.length > 1 ? pathParts.slice(0, -1).join("/") : "";
+			if (folder) {
+				row.createEl("span", {
+					text: folder,
+					cls: "nexus-vault-activity-path",
+				});
+			}
+
+			row.createEl("span", {
+				text: relativeTime(file.stat.mtime),
+				cls: "nexus-vault-activity-time",
+			});
+
+			row.addEventListener("click", () => {
+				this.plugin.app.workspace.openLinkText(file.path, "", false);
+			});
+		}
+	}
+
+	// ── Render: Heatmap ──────────────────────────────────────
+
+	private renderHeatmap(containerEl: HTMLElement, config: HeatmapConfig): void {
+		const weeks = config.weeks || 20;
+		const label = config.label || "CONTRIBUTION ACTIVITY";
+		const now = new Date();
+		const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+		const opts = this.plugin.settings;
+		const exclude = opts.excludeFolders || [];
+
+		// Calculate start date (beginning of week, going back N weeks)
+		const startDate = new Date(today);
+		startDate.setDate(startDate.getDate() - (weeks - 1) * 7 - startDate.getDay());
+
+		// Count files per day using only markdown files + excludeFolders
+		const dayCounts = new Map<string, number>();
+		const files = this.plugin.app.vault.getMarkdownFiles();
+		for (const file of files) {
+			// Skip excluded folders
+			const firstFolder = file.path.split("/")[0];
+			if (exclude.includes(firstFolder)) continue;
+
+			// Use ctime (created) or mtime — prefer mtime for activity
+			const d = new Date(file.stat.mtime);
+			const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+			dayCounts.set(key, (dayCounts.get(key) || 0) + 1);
+		}
+
+		// Merge timeline events
+		for (const event of this.timelineEvents) {
+			if (event.action === "deleted") continue;
+			const d = new Date(event.time);
+			const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+			dayCounts.set(key, (dayCounts.get(key) || 0) + 1);
+		}
+
+		// Normalize maxCount to displayed range only
+		let maxCount = 0;
+		for (let w = 0; w < weeks; w++) {
+			for (let d = 0; d < 7; d++) {
+				const cellDate = new Date(startDate);
+				cellDate.setDate(cellDate.getDate() + w * 7 + d);
+				if (cellDate > today) continue;
+				const key = `${cellDate.getFullYear()}-${String(cellDate.getMonth() + 1).padStart(2, "0")}-${String(cellDate.getDate()).padStart(2, "0")}`;
+				const count = dayCounts.get(key) || 0;
+				if (count > maxCount) maxCount = count;
+			}
+		}
+		maxCount = Math.max(1, maxCount);
+
+		const wrapper = containerEl.createDiv({ cls: "nexus-section" });
+		if (label) {
+			this.renderDivider(wrapper, label);
+		}
+
+		const heatmapEl = wrapper.createDiv({ cls: "nexus-heatmap" });
+		heatmapEl.style.setProperty("--nexus-heatmap-weeks", String(weeks));
+
+		// Month labels row
+		const monthRow = heatmapEl.createDiv({ cls: "nexus-heatmap-months" });
+		let lastMonth = -1;
+		const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+		for (let w = 0; w < weeks; w++) {
+			const weekStart = new Date(startDate);
+			weekStart.setDate(weekStart.getDate() + w * 7);
+			const month = weekStart.getMonth();
+			const spacer = monthRow.createDiv({ cls: "nexus-heatmap-month-spacer" });
+			if (month !== lastMonth) {
+				spacer.textContent = monthNames[month];
+				lastMonth = month;
+			}
+		}
+
+		// Day labels + grid
+		const bodyEl = heatmapEl.createDiv({ cls: "nexus-heatmap-body" });
+		const dayLabels = bodyEl.createDiv({ cls: "nexus-heatmap-days" });
+		const dayAbbrevs = ["", "Mon", "", "Wed", "", "Fri", ""];
+		for (const abbr of dayAbbrevs) {
+			const lbl = dayLabels.createDiv({ cls: "nexus-heatmap-day-label" });
+			if (abbr) lbl.textContent = abbr;
+		}
+
+		const gridEl = bodyEl.createDiv({ cls: "nexus-heatmap-grid" });
+		gridEl.style.gridTemplateColumns = `repeat(${weeks}, 1fr)`;
+
+		for (let w = 0; w < weeks; w++) {
+			for (let d = 0; d < 7; d++) {
+				const cellDate = new Date(startDate);
+				cellDate.setDate(cellDate.getDate() + w * 7 + d);
+				const key = `${cellDate.getFullYear()}-${String(cellDate.getMonth() + 1).padStart(2, "0")}-${String(cellDate.getDate()).padStart(2, "0")}`;
+				const count = dayCounts.get(key) || 0;
+				const cell = gridEl.createDiv({ cls: "nexus-heatmap-cell" });
+				cell.title = `${key}: ${count} file${count !== 1 ? "s" : ""}`;
+
+				if (cellDate > today) {
+					cell.classList.add("nexus-heatmap-cell-empty");
+				} else if (count === 0) {
+					cell.classList.add("nexus-heatmap-cell-level-0");
+				} else {
+					const level = Math.min(5, Math.ceil((count / maxCount) * 5));
+					cell.classList.add(`nexus-heatmap-cell-level-${level}`);
+				}
+			}
+		}
+
+		// Legend
+		const legendEl = heatmapEl.createDiv({ cls: "nexus-heatmap-legend" });
+		legendEl.createEl("span", { text: "Less", cls: "nexus-heatmap-legend-label" });
+		for (let i = 0; i <= 5; i++) {
+			const box = legendEl.createDiv({ cls: `nexus-heatmap-cell nexus-heatmap-cell-level-${i}` });
+			box.style.width = "10px";
+			box.style.height = "10px";
+		}
+		legendEl.createEl("span", { text: "More", cls: "nexus-heatmap-legend-label" });
+	}
+
+	// ── Render: Timeline ─────────────────────────────────────
+
+	private renderTimeline(containerEl: HTMLElement, config: TimelineConfig): void {
+		const count = config.count || 20;
+		const label = config.label || "ACTIVITY";
+		const exclude = config.exclude || this.plugin.settings.excludeFolders || [];
+
+		// Build initial activity from vault files sorted by mtime
+		const files = this.plugin.app.vault.getFiles();
+		const recent = files
+			.filter((f) => {
+				const firstFolder = f.path.split("/")[0];
+				return !exclude.includes(firstFolder);
+			})
+			.sort((a, b) => b.stat.mtime - a.stat.mtime)
+			.slice(0, count);
+
+		const wrapper = containerEl.createDiv({ cls: "nexus-section" });
+		if (label) {
+			this.renderDivider(wrapper, label);
+		}
+
+		const listEl = wrapper.createDiv({ cls: "nexus-timeline" });
+
+		// Merge stored events with file-based entries, dedupe, take latest
+		const allEvents = [...this.timelineEvents];
+		for (const file of recent) {
+			const exists = allEvents.some((e) => e.path === file.path && e.action === "modified");
+			if (!exists) {
+				allEvents.push({ time: file.stat.mtime, action: "modified", path: file.path });
+			}
+		}
+		allEvents.sort((a, b) => b.time - a.time);
+		const displayed = allEvents.slice(0, count);
+
+		if (displayed.length === 0) return;
+
+		const timeFormatter = new Intl.DateTimeFormat(undefined, {
+			hour: "2-digit",
+			minute: "2-digit",
+			hour12: false,
+		});
+
+		for (const event of displayed) {
+			const row = listEl.createDiv({ cls: "nexus-timeline-row" });
+			row.createEl("span", {
+				text: timeFormatter.format(new Date(event.time)),
+				cls: "nexus-timeline-time",
+			});
+			row.createEl("span", {
+				text: event.action.padEnd(9),
+				cls: `nexus-timeline-action nexus-timeline-action--${event.action}`,
+			});
+			row.createEl("span", {
+				text: event.oldPath ? `${event.oldPath} → ${event.path}` : event.path,
+				cls: "nexus-timeline-path",
+			});
+
+			// Click to open file
+			row.addEventListener("click", () => {
+				const file = this.plugin.app.vault.getAbstractFileByPath(event.path);
+				if (file instanceof TFile) {
+					this.plugin.app.workspace.openLinkText(event.path, "", false);
+				}
+			});
+		}
+
+		// Register vault event listeners for real-time tracking
+		this.registerTimelineEvents();
+	}
+
+	private registerTimelineEvents(): void {
+		if (this.vaultEventRefs.length > 0) return;
+
+		const onVaultCreate = (file: TAbstractFile) => {
+			if (!(file instanceof TFile)) return;
+			this.timelineEvents.unshift({ time: Date.now(), action: "created", path: file.path });
+			this.pruneTimelineEvents(100);
+		};
+
+		const onVaultModify = (file: TAbstractFile) => {
+			if (!(file instanceof TFile)) return;
+			const existing = this.timelineEvents.findIndex((e) => e.path === file.path && e.action === "modified");
+			if (existing >= 0) {
+				this.timelineEvents[existing].time = Date.now();
+			} else {
+				this.timelineEvents.unshift({ time: Date.now(), action: "modified", path: file.path });
+			}
+			this.pruneTimelineEvents(100);
+		};
+
+		const onVaultDelete = (file: TAbstractFile) => {
+			if (!(file instanceof TFile)) return;
+			this.timelineEvents.unshift({ time: Date.now(), action: "deleted", path: file.path });
+			this.pruneTimelineEvents(100);
+		};
+
+		const onVaultRename = (file: TAbstractFile, oldPath: string) => {
+			if (!(file instanceof TFile)) return;
+			this.timelineEvents.unshift({ time: Date.now(), action: "moved", path: file.path, oldPath });
+			this.pruneTimelineEvents(100);
+		};
+
+		this.vaultEventRefs.push(
+			this.plugin.app.vault.on("create", onVaultCreate),
+			this.plugin.app.vault.on("modify", onVaultModify),
+			this.plugin.app.vault.on("delete", onVaultDelete),
+			this.plugin.app.vault.on("rename", onVaultRename),
+		);
+	}
+
+	private pruneTimelineEvents(max: number): void {
+		if (this.timelineEvents.length > max) {
+			this.timelineEvents.length = max;
+		}
+	}
+
+	// ── Render: Clock ────────────────────────────────────────
+
+	private renderClock(containerEl: HTMLElement, config: ClockConfig): void {
+		const showDate = config.showDate !== false;
+		const showSeconds = config.showSeconds === true;
+		const format = config.format || "12h";
+		const timezone = config.timezone || undefined;
+		const label = config.label || "";
+
+		if (label) {
+			this.renderDivider(containerEl, label);
+		}
+
+		const clockEl = containerEl.createDiv({ cls: "nexus-clock" });
+
+		const timeEl = clockEl.createDiv({ cls: "nexus-clock-time" });
+		const dateEl = showDate ? clockEl.createDiv({ cls: "nexus-clock-date" }) : null;
+
+		const timeOpts: Intl.DateTimeFormatOptions = {
+			hour: "2-digit",
+			minute: "2-digit",
+			hour12: format === "12h",
+		};
+		if (showSeconds) timeOpts.second = "2-digit";
+		if (timezone) timeOpts.timeZone = timezone;
+
+		const dateOpts: Intl.DateTimeFormatOptions = {
+			weekday: "long",
+			year: "numeric",
+			month: "long",
+			day: "numeric",
+		};
+		if (timezone) dateOpts.timeZone = timezone;
+
+		const updateClock = () => {
+			const now = new Date();
+			timeEl.textContent = new Intl.DateTimeFormat(undefined, timeOpts).format(now);
+			if (dateEl) {
+				dateEl.textContent = new Intl.DateTimeFormat(undefined, dateOpts).format(now);
+			}
+		};
+
+		updateClock();
+
+		// Clear any existing clock interval
+		if (this.clockInterval) {
+			clearInterval(this.clockInterval);
+		}
+		this.clockInterval = setInterval(updateClock, 1000);
+	}
+
+	// ── Render: File Type Distribution ───────────────────────
+
+	private renderFileTypeChart(containerEl: HTMLElement, config: FileTypeChartConfig): void {
+		const max = config.max || 8;
+		const label = config.label || "FILE TYPES";
+
+		// Count by extension
+		const extCounts = new Map<string, number>();
+		const files = this.plugin.app.vault.getFiles();
+		for (const file of files) {
+			const ext = file.extension || "no ext";
+			extCounts.set(ext, (extCounts.get(ext) || 0) + 1);
+		}
+
+		const sorted = Array.from(extCounts.entries())
+			.sort((a, b) => b[1] - a[1]);
+
+		if (sorted.length === 0) return;
+
+		const topTypes = sorted.slice(0, max);
+		const otherCount = sorted.slice(max).reduce((sum, [_, count]) => sum + count, 0);
+		const total = files.length;
+
+		const displayItems = [...topTypes];
+		if (otherCount > 0) {
+			displayItems.push(["Other", otherCount]);
+		}
+
+		const maxCount = displayItems[0][1];
+
+		const wrapper = containerEl.createDiv({ cls: "nexus-section" });
+		if (label) {
+			this.renderDivider(wrapper, label);
+		}
+
+		const chartEl = wrapper.createDiv({ cls: "nexus-filetypes" });
+
+		for (const [ext, count] of displayItems) {
+			const row = chartEl.createDiv({ cls: "nexus-filetypes-row" });
+			row.createEl("span", { text: `.${ext}`, cls: "nexus-filetypes-ext" });
+			row.createEl("span", { text: String(count), cls: "nexus-filetypes-count" });
+			const barTrack = row.createDiv({ cls: "nexus-filetypes-bar-track" });
+			const barFill = barTrack.createDiv({ cls: "nexus-filetypes-bar-fill" });
+			const widthPct = maxCount > 0 ? (count / maxCount) * 100 : 0;
+			barFill.style.width = `${widthPct}%`;
+			const pctText = total > 0 ? Math.round((count / total) * 100) : 0;
+			row.createEl("span", { text: `${pctText}%`, cls: "nexus-filetypes-pct" });
+		}
 	}
 
 	// ── Render: Graph Links ────────────────────────────────────

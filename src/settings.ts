@@ -28,9 +28,12 @@ export const CONTENT_SLOT_OPTIONS: Record<ContentSlotType, string> = {
 	"heading": "Heading",
 	"moc-cards": "MOC Cards",
 	"quick-links": "Quick Links",
-	"recently": "Recently Modified",
-	"vaultlist": "Vault List",
+	"vault-activity": "Vault Activity",
 	"divider": "Divider",
+	"heatmap": "Heatmap",
+	"timeline": "Activity Timeline",
+	"clock": "Clock",
+	"filetypes": "File Types",
 };
 
 function getVaultFolders(app: App): string[] {
@@ -350,7 +353,7 @@ export class NexusSettingTab extends PluginSettingTab {
 	private setupDragAndDrop(
 		heading: HTMLElement,
 		index: number,
-		arr: { splice: (start: number, deleteCount: number) => unknown[] },
+		arr: { splice: (start: number, deleteCount: number, ...items: unknown[]) => unknown[] },
 		collapsedMap: Map<number, boolean>,
 	): { titleWrap: HTMLElement; actions: HTMLElement } {
 		heading.draggable = true;
@@ -825,8 +828,8 @@ export class NexusSettingTab extends PluginSettingTab {
 					});
 				}
 
-				// Vault list selector (when slot is "vaultlist")
-				if (currentSlot === "vaultlist") {
+				// Vault list selector (when slot is "vault-activity")
+				if (currentSlot === "vault-activity") {
 					this.addVaultListSelector(
 						fields,
 						isSubSlot ? "68px" : "8px",
@@ -993,8 +996,8 @@ export class NexusSettingTab extends PluginSettingTab {
 				this.display();
 			});
 
-			// Vault list selector (when slot is "vaultlist")
-			if (colSlots[i] === "vaultlist") {
+			// Vault list selector (when slot is "vault-activity")
+			if (colSlots[i] === "vault-activity") {
 				this.addVaultListSelector(
 					fields,
 					"68px",
@@ -1055,6 +1058,31 @@ export class NexusSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.showMocCards)
 					.onChange(async (value) => {
 						this.plugin.settings.showMocCards = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Show divider")
+			.setDesc("Show a divider label above MOC cards")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.showMocDivider)
+					.onChange(async (value) => {
+						this.plugin.settings.showMocDivider = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Divider label")
+			.setDesc("Text shown in the divider above MOC cards")
+			.addText((text) =>
+				text
+					.setPlaceholder("MOC CARDS")
+					.setValue(this.plugin.settings.mocDividerLabel)
+					.onChange(async (value) => {
+						this.plugin.settings.mocDividerLabel = value || "MOC CARDS";
 						await this.plugin.saveSettings();
 					})
 			);
@@ -1174,95 +1202,10 @@ export class NexusSettingTab extends PluginSettingTab {
 				});
 			});
 
-		// ── Recently Modified ──────────────────────────
-		new Setting(containerEl).setHeading().setName("Recently modified");
-
-		new Setting(containerEl)
-			.setName("Show recently modified")
-			.setDesc("Toggle recently modified notes section on the dashboard")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showRecently)
-					.onChange(async (value) => {
-						this.plugin.settings.showRecently = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Number of recent notes")
-			.setDesc("How many recently modified notes to show.")
-			.addSlider((slider) =>
-				slider
-					.setLimits(3, 20, 1)
-					.setValue(this.plugin.settings.recentCount)
-					.setDynamicTooltip()
-					.onChange(async (value) => {
-						this.plugin.settings.recentCount = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		const excludeStr = this.plugin.settings.excludeFolders.join(", ");
-		new Setting(containerEl)
-			.setName("Exclude folders")
-			.setDesc("Comma-separated folder names to hide from recent notes (e.g. Templates, Attachments)")
-			.addText((text) =>
-				text
-					.setPlaceholder("Templates, Attachments")
-					.setValue(excludeStr)
-					.onChange(async (value) => {
-						this.plugin.settings.excludeFolders = value
-							.split(",")
-							.map((s) => s.trim())
-							.filter((s) => s.length > 0);
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Path filter")
-			.setDesc("Comma-separated folder paths to include (e.g. Journal, Project). Leave empty for all.")
-			.addText((text) =>
-				text
-					.setPlaceholder("Journal, Project")
-					.setValue(this.plugin.settings.recentPath || "")
-					.onChange(async (value) => {
-						this.plugin.settings.recentPath = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Tag filter")
-			.setDesc("Comma-separated tags to include (e.g. draft, wip). Leave empty for all.")
-			.addText((text) =>
-				text
-					.setPlaceholder("draft, wip")
-					.setValue(this.plugin.settings.recentTags || "")
-					.onChange(async (value) => {
-						this.plugin.settings.recentTags = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Divider label")
-			.setDesc("Text shown in the divider above the recently modified section")
-			.addText((text) =>
-				text
-					.setPlaceholder("Recently Modified")
-					.setValue(this.plugin.settings.dividerLabel)
-					.onChange(async (value) => {
-						this.plugin.settings.dividerLabel = value || "Recently Modified";
-						await this.plugin.saveSettings();
-					})
-			);
-
-		// ── Vault Lists ─────────────────────────────────
-		new Setting(containerEl).setHeading().setName("Vault Lists");
+		// ── Vault Activity Lists ─────────────────────────
+		new Setting(containerEl).setHeading().setName("Vault Activity Lists");
 		containerEl.createEl("p", {
-			text: "Configure named vault lists for use in layout slots. Each list filters vault notes by path and/or tags.",
+			text: "Configure named vault activity presets for use in layout slots. Each list filters vault notes by path and/or tags, and renders in terminal log style.",
 			cls: "setting-item-description",
 		});
 
@@ -1271,18 +1214,18 @@ export class NexusSettingTab extends PluginSettingTab {
 		});
 
 		new Setting(containerEl)
-			.setName("Add vault list")
-			.setDesc("Add a new named vault list for use in layout slots.")
+			.setName("Add vault activity list")
+			.setDesc("Add a new named vault activity preset for use in layout slots.")
 			.addButton((btn) =>
 				btn
-					.setButtonText("+ Add Vault List")
+					.setButtonText("+ Add List")
 					.setCta()
 					.onClick(async () => {
 						this.plugin.settings.vaultLists.push({
 							name: "New List",
 							path: "",
 							tags: "",
-							count: this.plugin.settings.recentCount,
+							count: this.plugin.settings.vaultActivityCount,
 							showDivider: true,
 						});
 						await this.plugin.saveSettings();
@@ -1383,6 +1326,226 @@ export class NexusSettingTab extends PluginSettingTab {
 						});
 						await this.plugin.saveSettings();
 						this.display();
+					})
+			);
+
+		// ── Heatmap ─────────────────────────────────────
+		new Setting(containerEl).setHeading().setName("Heatmap");
+		containerEl.createEl("p", {
+			text: "GitHub-style contribution calendar showing daily vault activity.",
+			cls: "setting-item-description",
+		});
+
+		new Setting(containerEl)
+			.setName("Show heatmap")
+			.setDesc("Show the contribution heatmap on the dashboard")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.showHeatmap)
+					.onChange(async (value) => {
+						this.plugin.settings.showHeatmap = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Weeks")
+			.setDesc("Number of weeks to display (8–52)")
+			.addSlider((slider) =>
+				slider
+					.setLimits(8, 52, 1)
+					.setValue(this.plugin.settings.heatmapWeeks)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						this.plugin.settings.heatmapWeeks = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Label")
+			.setDesc("Text shown in the divider above the heatmap")
+			.addText((text) =>
+				text
+					.setPlaceholder("CONTRIBUTION ACTIVITY")
+					.setValue(this.plugin.settings.heatmapLabel)
+					.onChange(async (value) => {
+						this.plugin.settings.heatmapLabel = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		// ── Activity Timeline ──────────────────────────
+		new Setting(containerEl).setHeading().setName("Activity Timeline");
+		containerEl.createEl("p", {
+			text: "Terminal-style chronological log of vault file activity.",
+			cls: "setting-item-description",
+		});
+
+		new Setting(containerEl)
+			.setName("Show activity timeline")
+			.setDesc("Show the activity timeline on the dashboard")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.showActivityTimeline)
+					.onChange(async (value) => {
+						this.plugin.settings.showActivityTimeline = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Number of entries")
+			.setDesc("How many activity entries to show")
+			.addSlider((slider) =>
+				slider
+					.setLimits(5, 50, 1)
+					.setValue(this.plugin.settings.activityTimelineCount)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						this.plugin.settings.activityTimelineCount = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Label")
+			.setDesc("Text shown in the divider above the timeline")
+			.addText((text) =>
+				text
+					.setPlaceholder("ACTIVITY")
+					.setValue(this.plugin.settings.activityTimelineLabel)
+					.onChange(async (value) => {
+						this.plugin.settings.activityTimelineLabel = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		// ── Clock ──────────────────────────────────────
+		new Setting(containerEl).setHeading().setName("Clock");
+		containerEl.createEl("p", {
+			text: "Real-time digital clock with optional second timezone.",
+			cls: "setting-item-description",
+		});
+
+		new Setting(containerEl)
+			.setName("Show clock")
+			.setDesc("Show the clock on the dashboard")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.showClock)
+					.onChange(async (value) => {
+						this.plugin.settings.showClock = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Timezone")
+			.setDesc("IANA timezone (e.g. America/New_York). Leave empty for local time.")
+			.addText((text) =>
+				text
+					.setPlaceholder("Local time")
+					.setValue(this.plugin.settings.clockTimezone)
+					.onChange(async (value) => {
+						this.plugin.settings.clockTimezone = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Show date")
+			.setDesc("Show the date below the time")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.clockShowDate)
+					.onChange(async (value) => {
+						this.plugin.settings.clockShowDate = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Show seconds")
+			.setDesc("Show seconds in the clock")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.clockShowSeconds)
+					.onChange(async (value) => {
+						this.plugin.settings.clockShowSeconds = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Format")
+			.setDesc("12-hour or 24-hour format")
+			.addDropdown((dropdown) => {
+				dropdown.addOption("12h", "12-hour");
+				dropdown.addOption("24h", "24-hour");
+				dropdown.setValue(this.plugin.settings.clockFormat);
+				dropdown.onChange(async (value) => {
+					this.plugin.settings.clockFormat = value as "12h" | "24h";
+					await this.plugin.saveSettings();
+				});
+			});
+
+		new Setting(containerEl)
+			.setName("Label")
+			.setDesc("Text shown in the divider above the clock")
+			.addText((text) =>
+				text
+					.setPlaceholder("")
+					.setValue(this.plugin.settings.clockLabel)
+					.onChange(async (value) => {
+						this.plugin.settings.clockLabel = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		// ── File Types ─────────────────────────────────
+		new Setting(containerEl).setHeading().setName("File Type Distribution");
+		containerEl.createEl("p", {
+			text: "Horizontal bar chart showing file type breakdown in the vault.",
+			cls: "setting-item-description",
+		});
+
+		new Setting(containerEl)
+			.setName("Show file type chart")
+			.setDesc("Show the file type distribution on the dashboard")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.showFileTypeChart)
+					.onChange(async (value) => {
+						this.plugin.settings.showFileTypeChart = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Max types")
+			.setDesc("Maximum file types to display (3–15)")
+			.addSlider((slider) =>
+				slider
+					.setLimits(3, 15, 1)
+					.setValue(this.plugin.settings.fileTypeChartMax)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						this.plugin.settings.fileTypeChartMax = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Label")
+			.setDesc("Text shown in the divider above the chart")
+			.addText((text) =>
+				text
+					.setPlaceholder("FILE TYPES")
+					.setValue(this.plugin.settings.fileTypeChartLabel)
+					.onChange(async (value) => {
+						this.plugin.settings.fileTypeChartLabel = value;
+						await this.plugin.saveSettings();
 					})
 			);
 	}
@@ -1671,6 +1834,15 @@ export class NexusSettingTab extends PluginSettingTab {
 		const setting = new Setting(containerEl);
 
 		setting.setName(stat.label);
+		setting.addText((text) =>
+			text
+				.setPlaceholder("Label")
+				.setValue(stat.label)
+				.onChange(async (value) => {
+					this.plugin.settings.stats[index].label = value;
+					await this.plugin.saveSettings();
+				})
+		);
 		setting.addDropdown((dropdown) => {
 			dropdown.addOption("", "All files");
 			for (const f of folders) {
@@ -1709,7 +1881,7 @@ export class NexusSettingTab extends PluginSettingTab {
 		lineLeft.style.background = d.gradient;
 		lineLeft.style.height = d.lineWidth;
 
-		const label = row.createEl("span", { cls: "nexus-settings-divider-preview-label", text: this.plugin.settings.dividerLabel || "Recently Modified" });
+		const label = row.createEl("span", { cls: "nexus-settings-divider-preview-label", text: this.plugin.settings.vaultActivityLabel || "VAULT ACTIVITY" });
 		label.style.fontSize = d.labelSize;
 		label.style.fontWeight = d.labelWeight;
 		label.style.color = d.labelColor;

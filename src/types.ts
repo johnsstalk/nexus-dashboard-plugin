@@ -1,6 +1,6 @@
-export type DashboardBlock = DividerBlockConfig | SectionConfig | RecentlyConfig | VaultListConfig | RowConfig | ColumnConfig | LinksConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig;
+export type DashboardBlock = DividerBlockConfig | SectionConfig | RecentlyConfig | VaultListConfig | VaultActivityConfig | RowConfig | ColumnConfig | LinksConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | HeatmapConfig | TimelineConfig | ClockConfig | FileTypeChartConfig;
 
-export type ContentSlotType = "stats" | "search" | "heading" | "moc-cards" | "quick-links" | "recently" | "vaultlist" | "divider" | "none";
+export type ContentSlotType = "stats" | "search" | "heading" | "moc-cards" | "quick-links" | "vault-activity" | "divider" | "heatmap" | "timeline" | "clock" | "filetypes" | "none";
 
 export interface DashboardConfig {
 	header: HeaderConfig;
@@ -77,14 +77,14 @@ export interface RowConfig {
 	proportion?: string;
 	gap?: string;
 	align?: "top" | "center" | "stretch";
-	children: (SectionConfig | ColumnConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | VaultListConfig)[];
+	children: (SectionConfig | ColumnConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | VaultListConfig | VaultActivityConfig | LinksConfig | HeatmapConfig | TimelineConfig | ClockConfig | FileTypeChartConfig)[];
 }
 
 export interface ColumnConfig {
 	kind: "column";
 	spacing?: string;
 	align?: "left" | "center" | "right" | "stretch";
-	children: (SectionConfig | RowConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | VaultListConfig)[];
+	children: (SectionConfig | RowConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | VaultListConfig | VaultActivityConfig | LinksConfig | HeatmapConfig | TimelineConfig | ClockConfig | FileTypeChartConfig)[];
 }
 
 export interface SearchConfig {
@@ -130,6 +130,47 @@ export interface VaultListConfig {
 	path?: string;
 	tags?: string[];
 	showDivider?: boolean;
+}
+
+export interface VaultActivityConfig {
+	kind: "vault-activity";
+	show: boolean;
+	count?: number;
+	path?: string;
+	tags?: string[];
+	label?: string;
+}
+
+export interface HeatmapConfig {
+	kind: "heatmap";
+	show: boolean;
+	weeks?: number;
+	label?: string;
+}
+
+export interface TimelineConfig {
+	kind: "timeline";
+	show: boolean;
+	count?: number;
+	label?: string;
+	exclude?: string[];
+}
+
+export interface ClockConfig {
+	kind: "clock";
+	show: boolean;
+	timezone?: string;
+	showDate?: boolean;
+	showSeconds?: boolean;
+	format?: "12h" | "24h";
+	label?: string;
+}
+
+export interface FileTypeChartConfig {
+	kind: "filetypes";
+	show: boolean;
+	max?: number;
+	label?: string;
 }
 
 // ── Settings interfaces ───────────────────────────────────────
@@ -195,13 +236,10 @@ export interface NexusSettings {
 	mocs: MocEntry[];
 	stats: StatEntry[];
 	showStats: boolean;
-	showRecently: boolean;
 	showGraph: boolean;
-	recentCount: number;
 	excludeFolders: string[];
 	mocGridColumns: number;
 	miniGridColumns: number;
-	dividerLabel: string;
 	dividerDesign: DividerDesign;
 	asciiDefaultFont: string;
 	asciiDefaultColor: string;
@@ -210,8 +248,6 @@ export interface NexusSettings {
 	asciiDefaultAlign: "left" | "center" | "right";
 	showSearch: boolean;
 	searchDefault: "vault" | "cards";
-	recentPath: string;
-	recentTags: string;
 	quickLinks: QuickLinkEntry[];
 	rowSizes: Record<string, string>;
 	rowLayouts: RowLayoutEntry[];
@@ -221,5 +257,27 @@ export interface NexusSettings {
 	quickLinksDividerLabel: string;
 	showHeader: boolean;
 	showMocCards: boolean;
+	showMocDivider: boolean;
+	mocDividerLabel: string;
 	showQuickLinks: boolean;
+	showHeatmap: boolean;
+	heatmapWeeks: number;
+	heatmapLabel: string;
+	showActivityTimeline: boolean;
+	activityTimelineCount: number;
+	activityTimelineLabel: string;
+	showClock: boolean;
+	clockTimezone: string;
+	clockShowDate: boolean;
+	clockShowSeconds: boolean;
+	clockFormat: "12h" | "24h";
+	clockLabel: string;
+	showFileTypeChart: boolean;
+	fileTypeChartMax: number;
+	fileTypeChartLabel: string;
+	showVaultActivity: boolean;
+	vaultActivityCount: number;
+	vaultActivityPath: string;
+	vaultActivityTags: string;
+	vaultActivityLabel: string;
 }
