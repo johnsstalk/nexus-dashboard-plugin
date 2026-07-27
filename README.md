@@ -20,6 +20,8 @@ Create a note with a `nexus-dashboard` code block:
 
 You can configure default settings in **Settings > Community Plugins > Nexus Dashboard**.
 
+![Dashboard](assets/nexus.png)
+
 ## Dashboard Components
 
 ### ASCII header
@@ -98,6 +100,12 @@ section:
       icon: Book
 ```
 ````
+
+![Cards](assets/project.png)
+
+![Code Block](assets/journal_code_block.png)
+
+![Journal](assets/journal.png)
 
 ### Divider
 A horizontal separator between sections.
