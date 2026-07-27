@@ -8,7 +8,9 @@ describe("buildDefaultConfig", () => {
 		expect(config.header.enabled).toBe(false);
 		expect(config.stats).toBeDefined();
 		expect(config.stats.enabled).toBe(false);
-		expect(config.blocks).toEqual([]);
+		expect(config.blocks).toHaveLength(2);
+		expect(config.blocks[0].kind).toBe("row");
+		expect(config.blocks[1].kind).toBe("row");
 		expect(config.recently).toBe(false);
 		expect(config.graph).toBeDefined();
 	});
@@ -18,7 +20,8 @@ describe("parseDashboard", () => {
 	it("returns default config for empty input", () => {
 		const config = parseDashboard("");
 		expect(config.header.enabled).toBe(false);
-		expect(config.blocks).toEqual([]);
+		expect(config.blocks).toHaveLength(2);
+		expect(config.blocks[0].kind).toBe("row");
 	});
 
 	it("parses header config", () => {

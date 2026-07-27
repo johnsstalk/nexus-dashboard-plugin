@@ -1,8 +1,14 @@
 import { CHARS, FigletChar, FONT_HEIGHT } from "./fonts/ansi-shadow";
 
+/**
+ * Definition of a FIGlet font, containing character line-art for ASCII rendering.
+ */
 export type FigletFont = {
+	/** Human-readable font name (e.g. "ANSI Shadow"). */
 	name: string;
+	/** Number of vertical lines per character. */
 	height: number;
+	/** Map of ASCII characters (uppercase) to their line-art definitions. */
 	chars: Record<string, FigletChar>;
 };
 
@@ -47,6 +53,22 @@ function padCharLines(chars: Record<string, FigletChar>): Record<string, FigletC
 	return padded;
 }
 
+/**
+ * Render a text string as FIGlet ASCII art.
+ *
+ * Converts input to uppercase, looks up each character in the font,
+ * and joins the result line-by-line. Trailing blank lines are stripped.
+ *
+ * @param text - The string to render. Converted to uppercase internally.
+ * @param _options - Optional settings; currently only `font` is supported.
+ * @returns A multi-line string of the rendered banner.
+ *
+ * @example
+ * ```ts
+ * const banner = renderFiglet("Hi");
+ * console.log(banner);
+ * ```
+ */
 export function renderFiglet(
 	text: string,
 	_options?: { font?: FigletFont }
@@ -79,10 +101,23 @@ const FONTS: Record<string, FigletFont> = {
 	"ANSI Shadow": DEFAULT_FONT,
 };
 
+/**
+ * Return the names of all registered FIGlet fonts.
+ *
+ * @returns Array of font name strings.
+ */
 export function getAvailableFonts(): string[] {
 	return Object.keys(FONTS);
 }
 
+/**
+ * Look up a FIGlet font by its name (case-sensitive).
+ *
+ * Falls back to the default "ANSI Shadow" font if the name is not found.
+ *
+ * @param name - The font name to look up.
+ * @returns The matching {@link FigletFont}, or the default font.
+ */
 export function getFontByName(name: string): FigletFont {
 	return FONTS[name] ?? DEFAULT_FONT;
 }

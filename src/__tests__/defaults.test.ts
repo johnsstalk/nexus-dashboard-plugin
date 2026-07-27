@@ -19,9 +19,7 @@ describe("DEFAULT_SETTINGS", () => {
 		expect(Array.isArray(DEFAULT_SETTINGS.mocs)).toBe(true);
 		expect(Array.isArray(DEFAULT_SETTINGS.stats)).toBe(true);
 		expect(typeof DEFAULT_SETTINGS.showStats).toBe("boolean");
-		expect(typeof DEFAULT_SETTINGS.showRecently).toBe("boolean");
 		expect(typeof DEFAULT_SETTINGS.showGraph).toBe("boolean");
-		expect(typeof DEFAULT_SETTINGS.recentCount).toBe("number");
 		expect(typeof DEFAULT_SETTINGS.mocGridColumns).toBe("number");
 		expect(typeof DEFAULT_SETTINGS.miniGridColumns).toBe("number");
 	});

@@ -51,13 +51,20 @@
   gap: 6px;
   padding: 8px 14px;
   background: var(--background-secondary);
-  border: none;
-  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
   white-space: nowrap;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
   flex: 1 1 auto;
   min-width: 0;
   justify-content: center;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  cursor: default;
+}
+
+.nexus-stat-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--interactive-accent);
+  box-shadow: 0 2px 8px var(--background-modifier-box-shadow, rgba(0, 0, 0, 0.06));
 }
 
 .nexus-stat-num {
@@ -993,13 +1000,18 @@
   text-decoration: none !important;
   color: var(--text-normal) !important;
   cursor: pointer;
-  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
 }
 
 .nexus-link-item:hover {
   transform: translateY(-1px);
   border-color: var(--interactive-accent);
   background: var(--background-modifier-hover);
+  box-shadow: 0 2px 8px var(--background-modifier-box-shadow, rgba(0, 0, 0, 0.06));
+}
+
+.nexus-link-item:active {
+  transform: translateY(0) scale(0.985);
 }
 
 .nexus-link-item:visited {
@@ -1142,7 +1154,7 @@
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 8px 24px var(--background-modifier-box-shadow, rgba(0, 0, 0, 0.15));
   margin-top: 4px;
 }
 
@@ -1481,14 +1493,16 @@
 .nexus-timeline-row {
   display: flex;
   gap: 0;
-  padding: 1px 0;
+  padding: 2px 4px;
   cursor: pointer;
-  transition: background 0.1s ease;
-  border-radius: 3px;
+  transition: background 0.1s ease, border-color 0.15s ease;
+  border-radius: 6px;
+  border: 1px solid transparent;
 }
 
 .nexus-timeline-row:hover {
   background: var(--background-modifier-hover);
+  border-color: var(--background-modifier-border);
 }
 
 .nexus-timeline-time {
@@ -1543,12 +1557,14 @@
   gap: 8px;
   padding: 4px 6px;
   cursor: pointer;
-  border-radius: 4px;
-  transition: background 0.1s ease;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  transition: background 0.1s ease, border-color 0.15s ease;
 }
 
 .nexus-vault-activity-row:hover {
   background: var(--background-modifier-hover);
+  border-color: var(--background-modifier-border);
 }
 
 .nexus-vault-activity-name {
@@ -1585,7 +1601,7 @@
 
 .nexus-clock {
   text-align: center;
-  padding: 8px 0;
+  padding: 8px 12px;
 }
 
 .nexus-clock-time {
@@ -1615,7 +1631,13 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 3px 0;
+  padding: 3px 4px;
+  border-radius: 6px;
+  transition: background 0.1s ease;
+}
+
+.nexus-filetypes-row:hover {
+  background: var(--background-modifier-hover);
 }
 
 .nexus-filetypes-ext {

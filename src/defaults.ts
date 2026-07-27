@@ -5,6 +5,7 @@ import type {
 	DividerDesign,
 } from "./types";
 
+/** Default Map of Content entries shown on the dashboard when no user config exists. */
 export const DEFAULT_MOCS: MocEntry[] = [
 	{ path: "MOC/Journal MOC.md", title: "Journal MOC", desc: "Personal reflections & daily logs", icon: "Journal" },
 	{ path: "MOC/Knowledge MOC.md", title: "Knowledge MOC", desc: "Learning notes & insights", icon: "Knowledge" },
@@ -14,6 +15,7 @@ export const DEFAULT_MOCS: MocEntry[] = [
 	{ path: "MOC/Tracker Index MOC.md", title: "Tracker Index MOC", desc: "Metrics, streaks & analytics", icon: "Trackers" },
 ];
 
+/** Default vault folder stat counters displayed in the dashboard header. */
 export const DEFAULT_STATS: StatEntry[] = [
 	{ folder: "", label: "Files" },
 	{ folder: "MOC", label: "MOCs" },
@@ -22,6 +24,7 @@ export const DEFAULT_STATS: StatEntry[] = [
 	{ folder: "Journal", label: "Journals" },
 ];
 
+/** Default styling for dashboard section dividers (gradient line + label appearance). */
 export const DEFAULT_DIVIDER_DESIGN: DividerDesign = {
 	gradient: "linear-gradient(90deg, transparent, var(--background-modifier-border), transparent)",
 	lineWidth: "1px",
@@ -31,6 +34,11 @@ export const DEFAULT_DIVIDER_DESIGN: DividerDesign = {
 	labelSpacing: "0.12em",
 };
 
+/**
+ * Complete default configuration for the Nexus dashboard plugin.
+ * Each property maps to a user-facing setting; the spread of nested
+ * objects ensures callers get independent copies via {@link deepCloneDefaults}.
+ */
 export const DEFAULT_SETTINGS: NexusSettings = {
 	headerText: "NEXUS",
 	openOnStartup: false,
@@ -83,6 +91,18 @@ export const DEFAULT_SETTINGS: NexusSettings = {
 	vaultActivityLabel: "VAULT ACTIVITY",
 };
 
+/**
+ * Returns a deep copy of {@link DEFAULT_SETTINGS} with all nested arrays and
+ * objects cloned so mutations won't affect the original defaults.
+ *
+ * @returns A fresh {@link NexusSettings} instance safe to mutate.
+ * @example
+ * ```ts
+ * const settings = deepCloneDefaults();
+ * settings.mocs.push({ path: "MOC/New.md", title: "New" });
+ * // DEFAULT_SETTINGS.mocs is unchanged
+ * ```
+ */
 export function deepCloneDefaults(): NexusSettings {
 	return {
 		...DEFAULT_SETTINGS,
@@ -97,6 +117,7 @@ export function deepCloneDefaults(): NexusSettings {
 	};
 }
 
+/** Named divider style presets that users can select from the settings UI. */
 export const DIVIDER_PRESETS: Record<string, DividerDesign> = {
 	default: { ...DEFAULT_DIVIDER_DESIGN },
 	bold: {
@@ -133,6 +154,7 @@ export const DIVIDER_PRESETS: Record<string, DividerDesign> = {
 	},
 };
 
+/** Human-readable display names for each key in {@link DIVIDER_PRESETS}. */
 export const DIVIDER_PRESET_NAMES: Record<string, string> = {
 	default: "Default",
 	bold: "Bold",
@@ -141,6 +163,19 @@ export const DIVIDER_PRESET_NAMES: Record<string, string> = {
 	dashed: "Dashed",
 };
 
+/**
+ * Matches a divider design against all known presets to identify which
+ * named preset it corresponds to.
+ *
+ * @param d - The divider design to match.
+ * @returns The preset key (e.g. `"bold"`, `"subtle"`), or `"default"` if no
+ *   preset matches.
+ * @example
+ * ```ts
+ * detectDividerPreset(DIVIDER_PRESETS.bold); // "bold"
+ * detectDividerPreset({ ...DEFAULT_DIVIDER_DESIGN, lineWidth: "3px" }); // "default"
+ * ```
+ */
 export function detectDividerPreset(d: DividerDesign): string {
 	for (const [key, preset] of Object.entries(DIVIDER_PRESETS)) {
 		if (

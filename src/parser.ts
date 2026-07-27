@@ -11,12 +11,19 @@ import {
 	VaultListConfig,
 	VaultActivityConfig,
 	SearchConfig,
+	StatsBlockConfig,
+	SearchBlockConfig,
 	HeatmapConfig,
 	TimelineConfig,
 	ClockConfig,
 	FileTypeChartConfig,
 } from "./types";
-import { ensureExtension as ensureExt } from "./utils";
+import {
+	ensureExtension as ensureExt,
+	safeParseInt,
+	splitCsv,
+	applyListConfigKV,
+} from "./utils";
 
 function finalizeCard(partial: Partial<CardConfig>): CardConfig {
 	return {
@@ -37,7 +44,26 @@ function finalizeLinkItem(partial: Partial<LinkItem>): LinkItem {
 	};
 }
 
-type ParseContext = "root" | "header" | "stats" | "divider" | "section" | "cards" | "graph" | "links" | "row" | "column" | "search" | "recently" | "vaultlist" | "vault-activity" | "section-divider" | "heatmap" | "timeline" | "clock" | "filetypes";
+type ParseContext =
+	| "root"
+	| "header"
+	| "stats"
+	| "divider"
+	| "section"
+	| "cards"
+	| "graph"
+	| "links"
+	| "row"
+	| "column"
+	| "search"
+	| "recently"
+	| "vaultlist"
+	| "vault-activity"
+	| "section-divider"
+	| "heatmap"
+	| "timeline"
+	| "clock"
+	| "filetypes";
 
 export function parseDashboard(raw: string): DashboardConfig {
 	const trimmed = raw.trim();
@@ -83,7 +109,11 @@ export function parseDashboard(raw: string): DashboardConfig {
 		// Strip YAML list prefix for known keywords (e.g. "- section:" → "section:")
 		if (t.startsWith("- ")) {
 			const stripped = t.slice(2);
-			if (/^(header|stats|graph|divider|section|links|row|column|search|recently|vaultlist|vault-activity):/.test(stripped)) {
+			if (
+				/^(header|stats|graph|divider|section|links|row|column|search|recently|vaultlist|vault-activity):/.test(
+					stripped,
+				)
+			) {
 				t = stripped;
 			}
 		}
@@ -125,11 +155,11 @@ export function parseDashboard(raw: string): DashboardConfig {
 					currentDivider = { kind: "divider", title: "", type: undefined };
 					continue;
 				}
-		// First divider for this section — attach it
-			if (currentSection) {
-				currentSection.divider = { kind: "divider", title: "", type: undefined };
-			}
-			context = "section-divider";
+				// First divider for this section — attach it
+				if (currentSection) {
+					currentSection.divider = { kind: "divider", title: "", type: undefined };
+				}
+				context = "section-divider";
 				continue;
 			}
 			flushCurrent();
@@ -160,12 +190,18 @@ export function parseDashboard(raw: string): DashboardConfig {
 		if (t === "section:") {
 			// If a divider was just defined (context === "divider"), attach it to this section
 			// instead of flushing it as a standalone divider
-			const pendingDivider = (context === "divider" && currentDivider) ? currentDivider : null;
+			const pendingDivider = context === "divider" && currentDivider ? currentDivider : null;
 			if (pendingDivider) {
 				currentDivider = null;
 			}
 			flushCurrent();
-			if (columnInsideRow && currentRow && currentColumn && currentColumn.children.length > 0 && indent <= columnIndent) {
+			if (
+				columnInsideRow &&
+				currentRow &&
+				currentColumn &&
+				currentColumn.children.length > 0 &&
+				indent <= columnIndent
+			) {
 				flushColumn();
 			}
 			context = "section";
@@ -184,7 +220,7 @@ export function parseDashboard(raw: string): DashboardConfig {
 
 		// ── Links block ─────────────────────────────────
 		if (t === "links:") {
-			const pendingDivider = (context === "divider" && currentDivider) ? currentDivider : null;
+			const pendingDivider = context === "divider" && currentDivider ? currentDivider : null;
 			if (pendingDivider) {
 				currentDivider = null;
 			}
@@ -217,7 +253,7 @@ export function parseDashboard(raw: string): DashboardConfig {
 			currentRowSectionsRemaining--;
 			context = "column";
 			currentColumn = { kind: "column", children: [] };
-				continue;
+			continue;
 		}
 
 		// ── Column marker ────────────────────────────────
@@ -234,8 +270,6 @@ export function parseDashboard(raw: string): DashboardConfig {
 			currentColumn = { kind: "column", children: [] };
 			continue;
 		}
-
-
 
 		// ── Search block ────────────────────────────────
 		if (t === "search:") {
@@ -326,24 +360,25 @@ export function parseDashboard(raw: string): DashboardConfig {
 
 		switch (context) {
 			case "header":
-			if (!config.header.enabled) {
-				config.header = { text: "", font: "", color: "", size: 1, enabled: true };
-			}
-			if (kv.key === "size") {
-				if (kv.value === "small") {
-					config.header.size = 0.6;
-				} else if (kv.value === "normal") {
-					config.header.size = 1;
-				} else {
-					const n = Number(kv.value);
-					config.header.size = Number.isFinite(n) && n > 0 ? n : 1;
+				if (!config.header.enabled) {
+					config.header = { text: "", font: "", color: "", size: 1, enabled: true };
 				}
-			} else if (kv.key === "mobileSize") {
-				const n = Number(kv.value);
-				config.header.mobileSize = Number.isFinite(n) && n > 0 ? n : undefined;
-			} else {
-				(config.header as Record<string, string | number | boolean | undefined>)[kv.key] = kv.value;
-			}
+				if (kv.key === "size") {
+					if (kv.value === "small") {
+						config.header.size = 0.6;
+					} else if (kv.value === "normal") {
+						config.header.size = 1;
+					} else {
+						const n = Number(kv.value);
+						config.header.size = Number.isFinite(n) && n > 0 ? n : 1;
+					}
+				} else if (kv.key === "mobileSize") {
+					const n = Number(kv.value);
+					config.header.mobileSize = Number.isFinite(n) && n > 0 ? n : undefined;
+				} else if (kv.key === "text" || kv.key === "font" || kv.key === "color" || kv.key === "align") {
+					(config.header as unknown as Record<string, string | number | boolean | undefined>)[kv.key] =
+						kv.value;
+				}
 				break;
 			case "stats":
 				if (kv.key === "show") {
@@ -368,10 +403,10 @@ export function parseDashboard(raw: string): DashboardConfig {
 			case "cards":
 				if (currentCard) applyCardKV(currentCard, kv);
 				break;
-			case "graph":
-				if (kv.key === "exclude") {
-					config.graph.exclude = kv.value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
-				} else if (kv.key === "showGraph") {
+		case "graph":
+			if (kv.key === "exclude") {
+				config.graph.exclude = splitCsv(kv.value);
+			} else if (kv.key === "showGraph") {
 					config.graph.enabled = kv.value === "true";
 				}
 				break;
@@ -382,46 +417,51 @@ export function parseDashboard(raw: string): DashboardConfig {
 					applyLinksKV(currentLinks, kv);
 				}
 				break;
-			case "row":
-				if (currentRow) {
-					applyRowKV(currentRow, kv);
-					if (kv.key === "columns") {
-						const n = parseInt(kv.value, 10);
-						currentRowSectionsRemaining = Number.isFinite(n) && n >= 1 && n <= 4 ? n : 2;
-					}
+		case "row":
+			if (currentRow) {
+				applyRowKV(currentRow, kv);
+				if (kv.key === "columns") {
+					currentRowSectionsRemaining = safeParseInt(kv.value, 2, 1, 4) ?? 2;
+				}
+			}
+				break;
+			case "column":
+				if (currentColumn) {
+					if (kv.key === "spacing") currentColumn.spacing = kv.value;
+					if (kv.key === "align")
+						currentColumn.align = kv.value as "left" | "center" | "right" | "stretch";
 				}
 				break;
-		case "column":
-			if (currentColumn) {
-				if (kv.key === "spacing") currentColumn.spacing = kv.value;
-				if (kv.key === "align") currentColumn.align = kv.value as "left" | "center" | "right" | "stretch";
-
-			}
-			break;
 			case "search":
 				if (currentSearch) applySearchKV(currentSearch, kv);
 				break;
-			case "recently":
-				if (currentRecently) applyRecentlyKV(currentRecently, kv);
-				break;
+		case "recently":
+			if (currentRecently) applyListConfigKV(currentRecently, kv);
+			break;
 		case "vaultlist":
-			if (currentVaultList) applyVaultListKV(currentVaultList, kv);
-			break;
-		case "heatmap":
-			if (currentHeatmap) applyHeatmapKV(currentHeatmap, kv);
-			break;
-		case "timeline":
-			if (currentTimeline) applyTimelineKV(currentTimeline, kv);
-			break;
-		case "clock":
-			if (currentClock) applyClockKV(currentClock, kv);
-			break;
-		case "filetypes":
-			if (currentFileTypeChart) applyFileTypeChartKV(currentFileTypeChart, kv);
-			break;
+			if (currentVaultList) applyListConfigKV(currentVaultList, kv);
+				break;
+			case "heatmap":
+				if (currentHeatmap) applyHeatmapKV(currentHeatmap, kv);
+				break;
+			case "timeline":
+				if (currentTimeline) applyTimelineKV(currentTimeline, kv);
+				break;
+			case "clock":
+				if (currentClock) applyClockKV(currentClock, kv);
+				break;
+			case "filetypes":
+				if (currentFileTypeChart) applyFileTypeChartKV(currentFileTypeChart, kv);
+				break;
 		case "vault-activity":
-			if (currentVaultActivity) applyVaultActivityKV(currentVaultActivity, kv);
-			break;
+			if (currentVaultActivity) {
+				applyListConfigKV(currentVaultActivity, kv, {
+					label: (val, t) => {
+						(t as VaultActivityConfig).label = val;
+					},
+				});
+			}
+				break;
 		}
 	}
 
@@ -488,7 +528,11 @@ export function parseDashboard(raw: string): DashboardConfig {
 			}
 			currentSection = null;
 		} else if (currentCard) {
-			const implicitSection: SectionConfig = { kind: "section", columns: 2, cards: [finalizeCard(currentCard)] };
+			const implicitSection: SectionConfig = {
+				kind: "section",
+				columns: 2,
+				cards: [finalizeCard(currentCard)],
+			};
 			if (currentColumn) {
 				currentColumn.children.push(implicitSection);
 			} else if (currentRow && currentRowSectionsRemaining > 0) {
@@ -613,8 +657,7 @@ function applyDividerKV(divider: DividerBlockConfig, kv: { key: string; value: s
 
 function applySectionKV(section: SectionConfig, kv: { key: string; value: string }) {
 	if (kv.key === "columns" || kv.key === "grid") {
-		const n = parseInt(kv.value, 10);
-		section.columns = Number.isFinite(n) && n >= 1 ? n : 2;
+		section.columns = safeParseInt(kv.value, 2, 1) ?? 2;
 	}
 }
 
@@ -629,8 +672,7 @@ function applyCardKV(card: Partial<CardConfig>, kv: { key: string; value: string
 function applyLinksKV(links: LinksConfig, kv: { key: string; value: string }) {
 	if (kv.key === "title") links.title = kv.value;
 	if (kv.key === "columns") {
-		const n = parseInt(kv.value, 10);
-		links.columns = Number.isFinite(n) && n >= 1 ? n : 3;
+		links.columns = safeParseInt(kv.value, 3, 1);
 	}
 }
 
@@ -653,42 +695,7 @@ function applySearchKV(search: SearchConfig, kv: { key: string; value: string })
 	if (kv.key === "placeholder") search.placeholder = kv.value;
 }
 
-function applyRecentlyKV(recently: RecentlyConfig, kv: { key: string; value: string }) {
-	if (kv.key === "show") recently.show = kv.value === "true";
-	if (kv.key === "count") {
-		const n = parseInt(kv.value, 10);
-		recently.count = Number.isFinite(n) && n > 0 ? n : undefined;
-	}
-	if (kv.key === "path") recently.path = kv.value;
-	if (kv.key === "tags") {
-		recently.tags = kv.value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
-	}
-}
-
-function applyVaultListKV(vaultList: VaultListConfig, kv: { key: string; value: string }) {
-	if (kv.key === "show") vaultList.show = kv.value === "true";
-	if (kv.key === "count") {
-		const n = parseInt(kv.value, 10);
-		vaultList.count = Number.isFinite(n) && n > 0 ? n : undefined;
-	}
-	if (kv.key === "path") vaultList.path = kv.value;
-	if (kv.key === "tags") {
-		vaultList.tags = kv.value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
-	}
-}
-
-function applyVaultActivityKV(vaultActivity: VaultActivityConfig, kv: { key: string; value: string }) {
-	if (kv.key === "show") vaultActivity.show = kv.value === "true";
-	if (kv.key === "count") {
-		const n = parseInt(kv.value, 10);
-		vaultActivity.count = Number.isFinite(n) && n > 0 ? n : undefined;
-	}
-	if (kv.key === "path") vaultActivity.path = kv.value;
-	if (kv.key === "tags") {
-		vaultActivity.tags = kv.value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
-	}
-	if (kv.key === "label") vaultActivity.label = kv.value;
-}
+// applyListConfigKV (from utils) handles: applyRecentlyKV, applyVaultListKV, applyVaultActivityKV
 
 function applyHeatmapKV(heatmap: HeatmapConfig, kv: { key: string; value: string }) {
 	if (kv.key === "show") heatmap.show = kv.value === "true";
@@ -707,7 +714,7 @@ function applyTimelineKV(timeline: TimelineConfig, kv: { key: string; value: str
 	}
 	if (kv.key === "label") timeline.label = kv.value;
 	if (kv.key === "exclude") {
-		timeline.exclude = kv.value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+		timeline.exclude = splitCsv(kv.value);
 	}
 }
 
@@ -754,12 +761,18 @@ function splitKV(line: string): { key: string; value: string } | null {
 	const idx = line.indexOf(":");
 	if (idx === -1) return null;
 	const key = line.slice(0, idx).trim();
-	const value = line.slice(idx + 1).trim().replace(/^["']|["']$/g, "");
+	const value = line
+		.slice(idx + 1)
+		.trim()
+		.replace(/^["']|["']$/g, "");
 	return { key, value };
 }
 
 function parseValue(line: string, prefix: string): string {
-	return line.slice(prefix.length).trim().replace(/^["']|["']$/g, "");
+	return line
+		.slice(prefix.length)
+		.trim()
+		.replace(/^["']|["']$/g, "");
 }
 
 export function buildDefaultConfig(): DashboardConfig {
@@ -771,32 +784,30 @@ export function buildDefaultConfig(): DashboardConfig {
 		graph: { enabled: false, exclude: [] },
 	};
 
-	// Three-column default layout:
-	// Row 1: Stats (1/3) | Search+Clock (1/3) | Quick Links (1/3)
-	// Row 2: MOCCards (1/3) | Timeline (1/3) | Heatmap (1/3)
-	// Row 3: FileTypes (1/3) | VaultActivity (1/3)
+	// Default 2-row, 3-column layout for fresh users:
+	// Row 1: Stats | Clock | Search
+	// Row 2: Timeline | MOC Cards | Heatmap
 	config.blocks.push(
-		{ kind: "row", columns: 3, proportion: "33/34/33", children: [
-			{ kind: "column", children: [
-				{ kind: "stats", config: config.stats } as StatsBlockConfig,
-			]},
-			{ kind: "column", children: [
-				{ kind: "search", config: { show: true } } as SearchBlockConfig,
-			]},
-			{ kind: "column", children: [
-				{ kind: "links", items: [], columns: 1 } as LinksConfig,
-			]},
-		]},
-		{ kind: "row", columns: 3, proportion: "33/34/33", children: [
-			{ kind: "column", children: [] },
-			{ kind: "column", children: [] },
-			{ kind: "column", children: [] },
-		]},
-		{ kind: "row", columns: 3, proportion: "33/34/33", children: [
-			{ kind: "column", children: [] },
-			{ kind: "column", children: [] },
-			{ kind: "column", children: [] },
-		]},
+		{
+			kind: "row",
+			columns: 3,
+			proportion: "33/33/34",
+			children: [
+				{ kind: "column", children: [{ kind: "stats", config: config.stats } as StatsBlockConfig] },
+				{ kind: "column", children: [] },
+				{ kind: "column", children: [{ kind: "search", config: { show: true } } as SearchBlockConfig] },
+			],
+		},
+		{
+			kind: "row",
+			columns: 3,
+			proportion: "33/34/33",
+			children: [
+				{ kind: "column", children: [] },
+				{ kind: "column", children: [] },
+				{ kind: "column", children: [] },
+			],
+		},
 	);
 
 	return config;

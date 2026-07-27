@@ -1,7 +1,15 @@
-import { Editor, MarkdownView, MarkdownFileInfo, Plugin, Notice, TFile, TAbstractFile } from "obsidian";
+import {
+	Editor,
+	MarkdownView,
+	MarkdownFileInfo,
+	Plugin,
+	Notice,
+	TFile,
+	TAbstractFile,
+} from "obsidian";
 import { NexusSettings } from "./types";
 import { DEFAULT_SETTINGS } from "./defaults";
-import { hasExtension, ensureExtension } from "./utils";
+import { hasExtension, ensureExtension, splitCsv } from "./utils";
 import { NexusSettingTab } from "./settings";
 import { NexusRenderer } from "./renderer";
 
@@ -89,7 +97,7 @@ export default class NexusDashboardPlugin extends Plugin {
 
 				// Update paths inside nexus-dashboard code blocks in all vault notes
 				this.updateCodeBlockPaths(oldPath, newPath);
-			})
+			}),
 		);
 
 		// ── Open on startup ─────────────────────────────────
@@ -138,60 +146,166 @@ export default class NexusDashboardPlugin extends Plugin {
 		try {
 			const data = await this.loadData();
 			this.settings = {
-				headerText: typeof data?.headerText === "string" ? data.headerText : DEFAULT_SETTINGS.headerText,
-				openOnStartup: typeof data?.openOnStartup === "boolean" ? data.openOnStartup : DEFAULT_SETTINGS.openOnStartup,
-				mocs: data?.mocs && Array.isArray(data.mocs) ? data.mocs.map((m: Record<string, unknown>) => ({ ...m })) : DEFAULT_SETTINGS.mocs.map((m) => ({ ...m })),
-				stats: data?.stats && Array.isArray(data.stats) ? data.stats.map((s: Record<string, unknown>) => ({ ...s })) : DEFAULT_SETTINGS.stats.map((s) => ({ ...s })),
+				headerText:
+					typeof data?.headerText === "string" ? data.headerText : DEFAULT_SETTINGS.headerText,
+				openOnStartup:
+					typeof data?.openOnStartup === "boolean" ? data.openOnStartup : DEFAULT_SETTINGS.openOnStartup,
+				mocs:
+					data?.mocs && Array.isArray(data.mocs)
+						? data.mocs.map((m: Record<string, unknown>) => ({ ...m }))
+						: DEFAULT_SETTINGS.mocs.map((m) => ({ ...m })),
+				stats:
+					data?.stats && Array.isArray(data.stats)
+						? data.stats.map((s: Record<string, unknown>) => ({ ...s }))
+						: DEFAULT_SETTINGS.stats.map((s) => ({ ...s })),
 				showStats: typeof data?.showStats === "boolean" ? data.showStats : DEFAULT_SETTINGS.showStats,
 				showGraph: typeof data?.showGraph === "boolean" ? data.showGraph : DEFAULT_SETTINGS.showGraph,
-				excludeFolders: Array.isArray(data?.excludeFolders)
-					? data.excludeFolders
-					: typeof data?.excludeFolders === "string"
-						? data.excludeFolders.split(",").map((s: string) => s.trim()).filter((s: string) => s.length > 0)
+			excludeFolders: Array.isArray(data?.excludeFolders)
+				? data.excludeFolders
+				: typeof data?.excludeFolders === "string"
+					? splitCsv(data.excludeFolders)
+					: [],
+				mocGridColumns:
+					typeof data?.mocGridColumns === "number"
+						? data.mocGridColumns
+						: DEFAULT_SETTINGS.mocGridColumns,
+				miniGridColumns:
+					typeof data?.miniGridColumns === "number"
+						? data.miniGridColumns
+						: DEFAULT_SETTINGS.miniGridColumns,
+				dividerDesign:
+					data?.dividerDesign && typeof data.dividerDesign === "object"
+						? { ...DEFAULT_SETTINGS.dividerDesign, ...data.dividerDesign }
+						: { ...DEFAULT_SETTINGS.dividerDesign },
+				asciiDefaultFont:
+					typeof data?.asciiDefaultFont === "string"
+						? data.asciiDefaultFont
+						: DEFAULT_SETTINGS.asciiDefaultFont,
+				asciiDefaultColor:
+					typeof data?.asciiDefaultColor === "string"
+						? data.asciiDefaultColor
+						: DEFAULT_SETTINGS.asciiDefaultColor,
+				asciiDefaultSize:
+					typeof data?.asciiDefaultSize === "number"
+						? data.asciiDefaultSize
+						: DEFAULT_SETTINGS.asciiDefaultSize,
+				asciiMobileSize:
+					typeof data?.asciiMobileSize === "number"
+						? data.asciiMobileSize
+						: DEFAULT_SETTINGS.asciiMobileSize,
+				asciiDefaultAlign:
+					typeof data?.asciiDefaultAlign === "string"
+						? data.asciiDefaultAlign
+						: DEFAULT_SETTINGS.asciiDefaultAlign,
+				showSearch:
+					typeof data?.showSearch === "boolean" ? data.showSearch : DEFAULT_SETTINGS.showSearch,
+				searchDefault:
+					typeof data?.searchDefault === "string" ? data.searchDefault : DEFAULT_SETTINGS.searchDefault,
+				quickLinks:
+					data?.quickLinks && Array.isArray(data.quickLinks)
+						? data.quickLinks.map((l: Record<string, unknown>) => ({ ...l }))
+						: DEFAULT_SETTINGS.quickLinks.map((l) => ({ ...l })),
+				vaultLists:
+					data?.vaultLists && Array.isArray(data.vaultLists)
+						? data.vaultLists.map((v: Record<string, unknown>) => ({ ...v }))
+						: DEFAULT_SETTINGS.vaultLists.map((v) => ({ ...v })),
+				rowSizes: data?.rowSizes && typeof data.rowSizes === "object" ? { ...data.rowSizes } : {},
+				rowLayouts:
+					data?.rowLayouts && Array.isArray(data.rowLayouts)
+						? data.rowLayouts.map((r: Record<string, unknown>) => ({ ...r }))
 						: [],
-				mocGridColumns: typeof data?.mocGridColumns === "number" ? data.mocGridColumns : DEFAULT_SETTINGS.mocGridColumns,
-				miniGridColumns: typeof data?.miniGridColumns === "number" ? data.miniGridColumns : DEFAULT_SETTINGS.miniGridColumns,
-				dividerDesign: data?.dividerDesign && typeof data.dividerDesign === "object" ? { ...DEFAULT_SETTINGS.dividerDesign, ...data.dividerDesign } : { ...DEFAULT_SETTINGS.dividerDesign },
-				asciiDefaultFont: typeof data?.asciiDefaultFont === "string" ? data.asciiDefaultFont : DEFAULT_SETTINGS.asciiDefaultFont,
-				asciiDefaultColor: typeof data?.asciiDefaultColor === "string" ? data.asciiDefaultColor : DEFAULT_SETTINGS.asciiDefaultColor,
-				asciiDefaultSize: typeof data?.asciiDefaultSize === "number" ? data.asciiDefaultSize : DEFAULT_SETTINGS.asciiDefaultSize,
-				asciiMobileSize: typeof data?.asciiMobileSize === "number" ? data.asciiMobileSize : DEFAULT_SETTINGS.asciiMobileSize,
-				asciiDefaultAlign: typeof data?.asciiDefaultAlign === "string" ? data.asciiDefaultAlign : DEFAULT_SETTINGS.asciiDefaultAlign,
-				showSearch: typeof data?.showSearch === "boolean" ? data.showSearch : DEFAULT_SETTINGS.showSearch,
-				searchDefault: typeof data?.searchDefault === "string" ? data.searchDefault : DEFAULT_SETTINGS.searchDefault,
-				quickLinks: data?.quickLinks && Array.isArray(data.quickLinks) ? data.quickLinks.map((l: Record<string, unknown>) => ({ ...l })) : DEFAULT_SETTINGS.quickLinks.map((l) => ({ ...l })),
-				vaultLists: data?.vaultLists && Array.isArray(data.vaultLists) ? data.vaultLists.map((v: Record<string, unknown>) => ({ ...v })) : DEFAULT_SETTINGS.vaultLists.map((v) => ({ ...v })),
-			rowSizes: data?.rowSizes && typeof data.rowSizes === "object" ? { ...data.rowSizes } : {},
-			rowLayouts: data?.rowLayouts && Array.isArray(data.rowLayouts) ? data.rowLayouts.map((r: Record<string, unknown>) => ({ ...r })) : [],
-			columnLayouts: data?.columnLayouts && Array.isArray(data.columnLayouts) ? data.columnLayouts.map((s: Record<string, unknown>) => ({ ...s })) : [],
-			showQuickLinksDivider: typeof data?.showQuickLinksDivider === "boolean" ? data.showQuickLinksDivider : DEFAULT_SETTINGS.showQuickLinksDivider,
-			quickLinksDividerLabel: typeof data?.quickLinksDividerLabel === "string" ? data.quickLinksDividerLabel : DEFAULT_SETTINGS.quickLinksDividerLabel,
-		showHeader: typeof data?.showHeader === "boolean" ? data.showHeader : DEFAULT_SETTINGS.showHeader,
-		showMocCards: typeof data?.showMocCards === "boolean" ? data.showMocCards : DEFAULT_SETTINGS.showMocCards,
-		showMocDivider: typeof data?.showMocDivider === "boolean" ? data.showMocDivider : DEFAULT_SETTINGS.showMocDivider,
-		mocDividerLabel: typeof data?.mocDividerLabel === "string" ? data.mocDividerLabel : DEFAULT_SETTINGS.mocDividerLabel,
-		showQuickLinks: typeof data?.showQuickLinks === "boolean" ? data.showQuickLinks : DEFAULT_SETTINGS.showQuickLinks,
-		showHeatmap: typeof data?.showHeatmap === "boolean" ? data.showHeatmap : DEFAULT_SETTINGS.showHeatmap,
-		heatmapWeeks: typeof data?.heatmapWeeks === "number" ? data.heatmapWeeks : DEFAULT_SETTINGS.heatmapWeeks,
-		heatmapLabel: typeof data?.heatmapLabel === "string" ? data.heatmapLabel : DEFAULT_SETTINGS.heatmapLabel,
-		showActivityTimeline: typeof data?.showActivityTimeline === "boolean" ? data.showActivityTimeline : DEFAULT_SETTINGS.showActivityTimeline,
-		activityTimelineCount: typeof data?.activityTimelineCount === "number" ? data.activityTimelineCount : DEFAULT_SETTINGS.activityTimelineCount,
-		activityTimelineLabel: typeof data?.activityTimelineLabel === "string" ? data.activityTimelineLabel : DEFAULT_SETTINGS.activityTimelineLabel,
-		showClock: typeof data?.showClock === "boolean" ? data.showClock : DEFAULT_SETTINGS.showClock,
-		clockTimezone: typeof data?.clockTimezone === "string" ? data.clockTimezone : DEFAULT_SETTINGS.clockTimezone,
-		clockShowDate: typeof data?.clockShowDate === "boolean" ? data.clockShowDate : DEFAULT_SETTINGS.clockShowDate,
-		clockShowSeconds: typeof data?.clockShowSeconds === "boolean" ? data.clockShowSeconds : DEFAULT_SETTINGS.clockShowSeconds,
-		clockFormat: typeof data?.clockFormat === "string" ? data.clockFormat : DEFAULT_SETTINGS.clockFormat,
-		clockLabel: typeof data?.clockLabel === "string" ? data.clockLabel : DEFAULT_SETTINGS.clockLabel,
-		showFileTypeChart: typeof data?.showFileTypeChart === "boolean" ? data.showFileTypeChart : DEFAULT_SETTINGS.showFileTypeChart,
-		fileTypeChartMax: typeof data?.fileTypeChartMax === "number" ? data.fileTypeChartMax : DEFAULT_SETTINGS.fileTypeChartMax,
-		fileTypeChartLabel: typeof data?.fileTypeChartLabel === "string" ? data.fileTypeChartLabel : DEFAULT_SETTINGS.fileTypeChartLabel,
-		showVaultActivity: typeof data?.showVaultActivity === "boolean" ? data.showVaultActivity : DEFAULT_SETTINGS.showVaultActivity,
-		vaultActivityCount: typeof data?.vaultActivityCount === "number" ? data.vaultActivityCount : DEFAULT_SETTINGS.vaultActivityCount,
-		vaultActivityPath: typeof data?.vaultActivityPath === "string" ? data.vaultActivityPath : DEFAULT_SETTINGS.vaultActivityPath,
-		vaultActivityTags: typeof data?.vaultActivityTags === "string" ? data.vaultActivityTags : DEFAULT_SETTINGS.vaultActivityTags,
-		vaultActivityLabel: typeof data?.vaultActivityLabel === "string" ? data.vaultActivityLabel : DEFAULT_SETTINGS.vaultActivityLabel,
-		};
+				columnLayouts:
+					data?.columnLayouts && Array.isArray(data.columnLayouts)
+						? data.columnLayouts.map((s: Record<string, unknown>) => ({ ...s }))
+						: [],
+				showQuickLinksDivider:
+					typeof data?.showQuickLinksDivider === "boolean"
+						? data.showQuickLinksDivider
+						: DEFAULT_SETTINGS.showQuickLinksDivider,
+				quickLinksDividerLabel:
+					typeof data?.quickLinksDividerLabel === "string"
+						? data.quickLinksDividerLabel
+						: DEFAULT_SETTINGS.quickLinksDividerLabel,
+				showHeader:
+					typeof data?.showHeader === "boolean" ? data.showHeader : DEFAULT_SETTINGS.showHeader,
+				showMocCards:
+					typeof data?.showMocCards === "boolean" ? data.showMocCards : DEFAULT_SETTINGS.showMocCards,
+				showMocDivider:
+					typeof data?.showMocDivider === "boolean"
+						? data.showMocDivider
+						: DEFAULT_SETTINGS.showMocDivider,
+				mocDividerLabel:
+					typeof data?.mocDividerLabel === "string"
+						? data.mocDividerLabel
+						: DEFAULT_SETTINGS.mocDividerLabel,
+				showQuickLinks:
+					typeof data?.showQuickLinks === "boolean"
+						? data.showQuickLinks
+						: DEFAULT_SETTINGS.showQuickLinks,
+				showHeatmap:
+					typeof data?.showHeatmap === "boolean" ? data.showHeatmap : DEFAULT_SETTINGS.showHeatmap,
+				heatmapWeeks:
+					typeof data?.heatmapWeeks === "number" ? data.heatmapWeeks : DEFAULT_SETTINGS.heatmapWeeks,
+				heatmapLabel:
+					typeof data?.heatmapLabel === "string" ? data.heatmapLabel : DEFAULT_SETTINGS.heatmapLabel,
+				showActivityTimeline:
+					typeof data?.showActivityTimeline === "boolean"
+						? data.showActivityTimeline
+						: DEFAULT_SETTINGS.showActivityTimeline,
+				activityTimelineCount:
+					typeof data?.activityTimelineCount === "number"
+						? data.activityTimelineCount
+						: DEFAULT_SETTINGS.activityTimelineCount,
+				activityTimelineLabel:
+					typeof data?.activityTimelineLabel === "string"
+						? data.activityTimelineLabel
+						: DEFAULT_SETTINGS.activityTimelineLabel,
+				showClock: typeof data?.showClock === "boolean" ? data.showClock : DEFAULT_SETTINGS.showClock,
+				clockTimezone:
+					typeof data?.clockTimezone === "string" ? data.clockTimezone : DEFAULT_SETTINGS.clockTimezone,
+				clockShowDate:
+					typeof data?.clockShowDate === "boolean" ? data.clockShowDate : DEFAULT_SETTINGS.clockShowDate,
+				clockShowSeconds:
+					typeof data?.clockShowSeconds === "boolean"
+						? data.clockShowSeconds
+						: DEFAULT_SETTINGS.clockShowSeconds,
+				clockFormat:
+					typeof data?.clockFormat === "string" ? data.clockFormat : DEFAULT_SETTINGS.clockFormat,
+				clockLabel:
+					typeof data?.clockLabel === "string" ? data.clockLabel : DEFAULT_SETTINGS.clockLabel,
+				showFileTypeChart:
+					typeof data?.showFileTypeChart === "boolean"
+						? data.showFileTypeChart
+						: DEFAULT_SETTINGS.showFileTypeChart,
+				fileTypeChartMax:
+					typeof data?.fileTypeChartMax === "number"
+						? data.fileTypeChartMax
+						: DEFAULT_SETTINGS.fileTypeChartMax,
+				fileTypeChartLabel:
+					typeof data?.fileTypeChartLabel === "string"
+						? data.fileTypeChartLabel
+						: DEFAULT_SETTINGS.fileTypeChartLabel,
+				showVaultActivity:
+					typeof data?.showVaultActivity === "boolean"
+						? data.showVaultActivity
+						: DEFAULT_SETTINGS.showVaultActivity,
+				vaultActivityCount:
+					typeof data?.vaultActivityCount === "number"
+						? data.vaultActivityCount
+						: DEFAULT_SETTINGS.vaultActivityCount,
+				vaultActivityPath:
+					typeof data?.vaultActivityPath === "string"
+						? data.vaultActivityPath
+						: DEFAULT_SETTINGS.vaultActivityPath,
+				vaultActivityTags:
+					typeof data?.vaultActivityTags === "string"
+						? data.vaultActivityTags
+						: DEFAULT_SETTINGS.vaultActivityTags,
+				vaultActivityLabel:
+					typeof data?.vaultActivityLabel === "string"
+						? data.vaultActivityLabel
+						: DEFAULT_SETTINGS.vaultActivityLabel,
+			};
 		} catch {
 			this.settings = { ...DEFAULT_SETTINGS };
 		}
@@ -236,12 +350,16 @@ export default class NexusDashboardPlugin extends Plugin {
 
 			// Also update label if it matches old basename
 			const oldBasename = oldPathNoExt.split("/").pop() || oldPathNoExt;
-			const newBasename = (newPath.replace(/\.\w{1,10}$/, "").split("/").pop() || "");
+			const newBasename =
+				newPath
+					.replace(/\.\w{1,10}$/, "")
+					.split("/")
+					.pop() || "";
 			if (oldBasename !== newBasename) {
 				const escaped = oldBasename.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 				updated = updated.replace(
 					new RegExp(`(label:\\s*)${escaped}(\\.md)?(\\s*\n)`),
-					`$1${newBasename}$3`
+					`$1${newBasename}$3`,
 				);
 			}
 

@@ -18,6 +18,7 @@ import {
 	detectDividerPreset,
 	deepCloneDefaults,
 } from "./defaults";
+import { safeParseInt } from "./utils";
 
 export const ICON_NAMES = Object.keys(ICONS);
 
@@ -122,6 +123,14 @@ export class NexusSettingTab extends PluginSettingTab {
 		this.plugin = plugin;
 	}
 
+	/**
+	 * Save settings to disk and re-render the settings tab.
+	 * Replaces the repeated `await this.plugin.saveSettings(); this.display();` pattern.
+	 */
+	private async saveAndRefresh(): Promise<void> {
+		await this.saveAndRefresh();
+	}
+
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
@@ -223,8 +232,7 @@ export class NexusSettingTab extends PluginSettingTab {
 							"This will restore all MOC cards, stats, and layout to the original defaults. This cannot be undone.",
 							async () => {
 								this.plugin.settings = deepCloneDefaults();
-								await this.plugin.saveSettings();
-								this.display();
+								await this.saveAndRefresh();
 							}
 						).open();
 					})
@@ -388,8 +396,7 @@ export class NexusSettingTab extends PluginSettingTab {
 			if (this.draggedIndex === null || this.draggedIndex === index) return;
 			const [moved] = arr.splice(this.draggedIndex, 1);
 			arr.splice(index, 0, moved);
-			await this.plugin.saveSettings();
-			this.display();
+			await this.saveAndRefresh();
 		});
 
 		const isCollapsed = collapsedMap.get(index) ?? true;
@@ -497,8 +504,7 @@ export class NexusSettingTab extends PluginSettingTab {
 							align: "top",
 							slots: ["moc-cards", "none"],
 						});
-						await this.plugin.saveSettings();
-						this.display();
+						await this.saveAndRefresh();
 					})
 			);
 
@@ -529,8 +535,7 @@ export class NexusSettingTab extends PluginSettingTab {
 							align: "stretch",
 							slots: ["moc-cards"],
 						});
-						await this.plugin.saveSettings();
-						this.display();
+						await this.saveAndRefresh();
 					})
 			);
 
@@ -554,8 +559,7 @@ export class NexusSettingTab extends PluginSettingTab {
 							.setWarning()
 							.onClick(async () => {
 								delete this.plugin.settings.rowSizes[key];
-								await this.plugin.saveSettings();
-								this.display();
+								await this.saveAndRefresh();
 							})
 					);
 			}
@@ -589,8 +593,7 @@ export class NexusSettingTab extends PluginSettingTab {
 				"This row layout will be removed from your dashboard.",
 				async () => {
 					this.plugin.settings.rowLayouts.splice(index, 1);
-					await this.plugin.saveSettings();
-					this.display();
+					await this.saveAndRefresh();
 				}
 			).open();
 		});
@@ -612,7 +615,7 @@ export class NexusSettingTab extends PluginSettingTab {
 
 		for (let i = 0; i < cols; i++) {
 			const colEl = preview.createDiv({ cls: "nexus-row-editor-col" });
-			const width = (Number.isFinite(parts[i]) && (parts[i] ?? 0) > 0) ? (parts[i] as number) : Math.floor(100 / cols);
+			const width = safeParseInt(String(parts[i] ?? 0), Math.floor(100 / cols), 1) ?? Math.floor(100 / cols);
 			colEl.style.width = `${width}%`;
 			const slot = layout.slots?.[i] || "none";
 			if (Array.isArray(slot)) {
@@ -667,8 +670,7 @@ export class NexusSettingTab extends PluginSettingTab {
 					while (currentSlots.length > safeCols) {
 						currentSlots.pop();
 					}
-					await this.plugin.saveSettings();
-					this.display();
+					await this.saveAndRefresh();
 				})
 		);
 
@@ -738,8 +740,7 @@ export class NexusSettingTab extends PluginSettingTab {
 					} else {
 						this.plugin.settings.rowLayouts[index].slots[i] = newVal;
 					}
-					await this.plugin.saveSettings();
-					this.display();
+					await this.saveAndRefresh();
 				});
 
 				// Remove button for sub-slots
@@ -754,8 +755,7 @@ export class NexusSettingTab extends PluginSettingTab {
 						}
 						const headings = this.plugin.settings.rowLayouts[index].slotHeadings || {};
 						delete headings[`${i}-${si}`];
-						await this.plugin.saveSettings();
-						this.display();
+						await this.saveAndRefresh();
 					});
 				}
 
@@ -867,8 +867,7 @@ export class NexusSettingTab extends PluginSettingTab {
 				} else {
 					this.plugin.settings.rowLayouts[index].slots[i] = [current, "none"];
 				}
-				await this.plugin.saveSettings();
-				this.display();
+				await this.saveAndRefresh();
 			});
 		}
 	}
@@ -895,8 +894,7 @@ export class NexusSettingTab extends PluginSettingTab {
 				"This column layout will be removed from your dashboard.",
 				async () => {
 					this.plugin.settings.columnLayouts.splice(index, 1);
-					await this.plugin.saveSettings();
-					this.display();
+					await this.saveAndRefresh();
 				}
 			).open();
 		});
@@ -992,8 +990,7 @@ export class NexusSettingTab extends PluginSettingTab {
 			setIcon(removeBtn, "x");
 			removeBtn.addEventListener("click", async () => {
 				this.plugin.settings.columnLayouts[index].slots.splice(i, 1);
-				await this.plugin.saveSettings();
-				this.display();
+				await this.saveAndRefresh();
 			});
 
 			// Vault list selector (when slot is "vault-activity")
@@ -1028,8 +1025,7 @@ export class NexusSettingTab extends PluginSettingTab {
 		addSlotBtn.textContent = "+ Add Slot";
 		addSlotBtn.addEventListener("click", async () => {
 			this.plugin.settings.columnLayouts[index].slots.push("none");
-			await this.plugin.saveSettings();
-			this.display();
+			await this.saveAndRefresh();
 		});
 	}
 
@@ -1105,8 +1101,7 @@ export class NexusSettingTab extends PluginSettingTab {
 							desc: "Description here",
 							icon: "MOC",
 						});
-						await this.plugin.saveSettings();
-						this.display();
+						await this.saveAndRefresh();
 					})
 			);
 
@@ -1169,8 +1164,7 @@ export class NexusSettingTab extends PluginSettingTab {
 					.setCta()
 					.onClick(async () => {
 						this.plugin.settings.stats.push({ folder: "", label: "New Stat" });
-						await this.plugin.saveSettings();
-						this.display();
+						await this.saveAndRefresh();
 					})
 			);
 
@@ -1228,8 +1222,7 @@ export class NexusSettingTab extends PluginSettingTab {
 							count: this.plugin.settings.vaultActivityCount,
 							showDivider: true,
 						});
-						await this.plugin.saveSettings();
-						this.display();
+						await this.saveAndRefresh();
 					})
 			);
 
@@ -1324,8 +1317,7 @@ export class NexusSettingTab extends PluginSettingTab {
 							url: "https://example.com",
 							icon: "Link",
 						});
-						await this.plugin.saveSettings();
-						this.display();
+						await this.saveAndRefresh();
 					})
 			);
 
@@ -1625,8 +1617,7 @@ export class NexusSettingTab extends PluginSettingTab {
 					}
 				}
 				Object.assign(this.plugin.settings, filtered);
-				await this.plugin.saveSettings();
-				this.display();
+				await this.saveAndRefresh();
 				new Notice("Settings imported");
 			} catch {
 				new Notice("Invalid settings file");
@@ -1657,8 +1648,7 @@ export class NexusSettingTab extends PluginSettingTab {
 				"This MOC card will be removed from the dashboard. You can add it back later.",
 				async () => {
 					this.plugin.settings.mocs.splice(index, 1);
-					await this.plugin.saveSettings();
-					this.display();
+					await this.saveAndRefresh();
 				}
 			).open();
 		});
@@ -1851,8 +1841,7 @@ export class NexusSettingTab extends PluginSettingTab {
 			dropdown.setValue(stat.folder);
 			dropdown.onChange(async (value) => {
 				this.plugin.settings.stats[index].folder = value;
-				await this.plugin.saveSettings();
-				this.display();
+				await this.saveAndRefresh();
 			});
 		});
 		setting.addExtraButton((btn) =>
@@ -1861,8 +1850,7 @@ export class NexusSettingTab extends PluginSettingTab {
 				.setTooltip("Remove")
 				.onClick(async () => {
 					this.plugin.settings.stats.splice(index, 1);
-					await this.plugin.saveSettings();
-					this.display();
+					await this.saveAndRefresh();
 				})
 		);
 	}
@@ -1922,8 +1910,7 @@ export class NexusSettingTab extends PluginSettingTab {
 				.setTooltip("Remove")
 				.onClick(async () => {
 					this.plugin.settings.quickLinks.splice(index, 1);
-					await this.plugin.saveSettings();
-					this.display();
+					await this.saveAndRefresh();
 				})
 		);
 	}
@@ -1957,8 +1944,7 @@ export class NexusSettingTab extends PluginSettingTab {
 				.setPlaceholder("Count")
 				.setValue(String(vl.count))
 				.onChange(async (value) => {
-					const n = parseInt(value, 10);
-					this.plugin.settings.vaultLists[index].count = Number.isFinite(n) && n >= 1 ? n : 9;
+					this.plugin.settings.vaultLists[index].count = safeParseInt(value, 9, 1) ?? 9;
 					await this.plugin.saveSettings();
 				})
 		);
@@ -1977,8 +1963,7 @@ export class NexusSettingTab extends PluginSettingTab {
 				.setTooltip("Remove")
 				.onClick(async () => {
 					this.plugin.settings.vaultLists.splice(index, 1);
-					await this.plugin.saveSettings();
-					this.display();
+					await this.saveAndRefresh();
 				})
 		);
 	}

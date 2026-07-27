@@ -24,6 +24,8 @@
 - **Searchable icon picker** in MOC card settings
 - **Collapse/expand MOC cards** in settings — click heading to toggle
 - Dev tooling — `.editorconfig`, `.eslintignore`, `.prettierrc`, `eslint.config.cjs`, `vitest.config.ts`, `src/__tests__/`
+- **Shared utility helpers** — `safeParseInt`, `splitCsv`, `applyListConfigKV` in `utils.ts` replacing duplicated patterns
+- **JSDoc documentation** — comprehensive doc comments across all source files (~80+ functions/interfaces)
 
 ### Fixed
 
@@ -37,6 +39,7 @@
 - Block render errors caught with `console.error` instead of crashing entire dashboard
 - Settings import validates each field independently (mocs/stats validated separately)
 - Safer `dataTransfer` handling in drag-and-drop
+- Quick-links fallback using wrong column count (`columns: 3` → `columns: 1`)
 
 ### Changed
 
@@ -53,6 +56,16 @@
 - Row columns use `flex: 1 1 0` base with override only when custom proportion is set
 - Row divider styling improved — transparent default, accent color on hover/drag
 - `NexusSettings` expanded — new fields: `columnLayouts`, `vaultLists`, `showQuickLinksDivider`, `quickLinksDividerLabel`, `showHeader`, `showMocCards`, `showQuickLinks`
+- **Deduplicated ~350 lines** across `parser.ts`, `renderer.ts`, `settings.ts`, `main.ts`
+- Replaced 12 `parseInt + Number.isFinite` patterns with `safeParseInt`
+- Replaced 9 `.split(",").map().filter()` patterns with `splitCsv`
+- Replaced 3 identical `applyXxxKV` parser functions with shared `applyListConfigKV`
+- Replaced 6 duplicated fallback block constructions with `renderSlotChildren()` loop
+- Extracted `saveAndRefresh()` in settings (replaces 24 duplicate save+display pairs)
+- Extracted `resetSearch()` closure in renderer (replaces 4 duplicate search reset blocks)
+- Removed 8 non-null assertions (replaced with `??= {}` pattern)
+- Fixed 3 `as unknown as` unsafe casts
+- Removed 15+ unused CSS classes
 
 ---
 
