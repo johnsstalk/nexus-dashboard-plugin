@@ -35,6 +35,7 @@ export const CONTENT_SLOT_OPTIONS: Record<ContentSlotType, string> = {
 	"timeline": "Activity Timeline",
 	"clock": "Clock",
 	"filetypes": "File Types",
+	"tasks": "Task Summary",
 };
 
 function getVaultFolders(app: App): string[] {
@@ -128,7 +129,8 @@ export class NexusSettingTab extends PluginSettingTab {
 	 * Replaces the repeated `await this.plugin.saveSettings(); this.display();` pattern.
 	 */
 	private async saveAndRefresh(): Promise<void> {
-		await this.saveAndRefresh();
+		await this.plugin.saveSettings();
+		this.display();
 	}
 
 	display(): void {
@@ -983,7 +985,7 @@ export class NexusSettingTab extends PluginSettingTab {
 			}
 			slotSelect.addEventListener("change", async () => {
 				this.plugin.settings.columnLayouts[index].slots[i] = slotSelect.value as ContentSlotType;
-				await this.plugin.saveSettings();
+				await this.saveAndRefresh();
 			});
 
 			const removeBtn = slotRow.createEl("button", { cls: "nexus-row-editor-card-btn" });
@@ -1540,6 +1542,102 @@ export class NexusSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					})
 			);
+
+		// ── Task Summary ────────────────────────────────────────
+		new Setting(containerEl).setHeading().setName("Task Summary");
+		containerEl.createEl("p", {
+			text: "Aggregate open/done tasks from your vault as stats, a progress bar, and a task list.",
+			cls: "setting-item-description",
+		});
+
+		new Setting(containerEl)
+			.setName("Show task summary")
+			.setDesc("Show the task summary widget on the dashboard")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.showTaskSummary)
+					.onChange(async (value) => {
+						this.plugin.settings.showTaskSummary = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Show progress bar")
+			.setDesc("Show a progress bar below the stats counters")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.taskSummaryShowProgress)
+					.onChange(async (value) => {
+						this.plugin.settings.taskSummaryShowProgress = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Show task list")
+			.setDesc("Show a scrollable list of unchecked tasks")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.taskSummaryShowList)
+					.onChange(async (value) => {
+						this.plugin.settings.taskSummaryShowList = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Folder filter")
+			.setDesc("Only count tasks in this vault folder (leave empty for all)")
+			.addText((text) =>
+				text
+					.setPlaceholder("Knowledge/Tasks & Action Management")
+					.setValue(this.plugin.settings.taskSummaryPath)
+					.onChange(async (value) => {
+						this.plugin.settings.taskSummaryPath = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Tag filter")
+			.setDesc("Comma-separated frontmatter tags to filter task files (leave empty for all)")
+			.addText((text) =>
+				text
+					.setPlaceholder("todo, tasks")
+					.setValue(this.plugin.settings.taskSummaryTags)
+					.onChange(async (value) => {
+						this.plugin.settings.taskSummaryTags = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Max tasks in list")
+			.setDesc("Maximum number of tasks to display in the list (5–30)")
+			.addSlider((slider) =>
+				slider
+					.setLimits(5, 30, 1)
+					.setValue(this.plugin.settings.taskSummaryCount)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						this.plugin.settings.taskSummaryCount = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Label")
+			.setDesc("Text shown in the divider above the task summary")
+			.addText((text) =>
+				text
+					.setPlaceholder("TASKS")
+					.setValue(this.plugin.settings.taskSummaryLabel)
+					.onChange(async (value) => {
+						this.plugin.settings.taskSummaryLabel = value;
+						await this.plugin.saveSettings();
+					})
+			);
 	}
 
 	// ── Export / Import helpers ──────────────────────────────
@@ -1857,7 +1955,7 @@ export class NexusSettingTab extends PluginSettingTab {
 
 	// ── Divider preview ───────────────────────────────────────
 
-	private renderDividerPreview(containerEl: HTMLElement): void {
+	private renderDividerPreview(containerEl: HTMLElement, labelText?: string): void {
 		const existing = containerEl.querySelector(".nexus-settings-divider-preview");
 		if (existing) existing.remove();
 
@@ -1869,11 +1967,11 @@ export class NexusSettingTab extends PluginSettingTab {
 		lineLeft.style.background = d.gradient;
 		lineLeft.style.height = d.lineWidth;
 
-		const label = row.createEl("span", { cls: "nexus-settings-divider-preview-label", text: this.plugin.settings.vaultActivityLabel || "VAULT ACTIVITY" });
-		label.style.fontSize = d.labelSize;
-		label.style.fontWeight = d.labelWeight;
-		label.style.color = d.labelColor;
-		label.style.letterSpacing = d.labelSpacing;
+		const labelEl = row.createEl("span", { cls: "nexus-settings-divider-preview-label", text: labelText || "DIVIDER" });
+		labelEl.style.fontSize = d.labelSize;
+		labelEl.style.fontWeight = d.labelWeight;
+		labelEl.style.color = d.labelColor;
+		labelEl.style.letterSpacing = d.labelSpacing;
 
 		const lineRight = row.createDiv({ cls: "nexus-settings-divider-preview-line" });
 		lineRight.style.background = d.gradient;

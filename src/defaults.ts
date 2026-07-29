@@ -89,6 +89,13 @@ export const DEFAULT_SETTINGS: NexusSettings = {
 	vaultActivityPath: "",
 	vaultActivityTags: "",
 	vaultActivityLabel: "VAULT ACTIVITY",
+	showTaskSummary: true,
+	taskSummaryShowProgress: true,
+	taskSummaryShowList: true,
+	taskSummaryPath: "Knowledge/Tasks & Action Management",
+	taskSummaryTags: "",
+	taskSummaryCount: 10,
+	taskSummaryLabel: "TASKS",
 };
 
 /**
@@ -115,6 +122,68 @@ export function deepCloneDefaults(): NexusSettings {
 		rowLayouts: DEFAULT_SETTINGS.rowLayouts.map((r) => ({ ...r, slots: [...r.slots] })),
 		columnLayouts: DEFAULT_SETTINGS.columnLayouts.map((s) => ({ ...s, slots: [...s.slots] })),
 	};
+}
+
+/**
+ * Merges partially-loaded data over a deep-cloned default, preserving
+ * type safety for arrays, objects, and the csv-to-array migration path
+ * for `excludeFolders`.
+ *
+ * This is the centralised replacement for the 170-line `loadSettings()`
+ * manual-block pattern — every new setting field is handled automatically
+ * without adding another 3-line typeof-check block.
+ *
+ * @param data - Raw data from `plugin.loadData()` (may be `null`/`undefined`).
+ * @param splitCsv - Optional CSV parser used when `excludeFolders` is still a
+ *   comma-separated string (legacy migration path).
+ * @returns A fully-populated {@link NexusSettings} safe to mutate.
+ */
+export function mergeSettings(
+	data: Partial<NexusSettings> | null | undefined,
+	splitCsv?: (val: string) => string[],
+): NexusSettings {
+	if (!data) return deepCloneDefaults();
+
+	return {
+		...deepCloneDefaults(),
+		...data,
+		mocs: Array.isArray(data.mocs)
+			? data.mocs.map((m) => ({ ...m }))
+			: deepCloneDefaults().mocs,
+		stats: Array.isArray(data.stats)
+			? data.stats.map((s) => ({ ...s }))
+			: deepCloneDefaults().stats,
+		quickLinks: Array.isArray(data.quickLinks)
+			? data.quickLinks.map((l) => ({ ...l }))
+			: deepCloneDefaults().quickLinks,
+		vaultLists: Array.isArray(data.vaultLists)
+			? data.vaultLists.map((v) => ({ ...v }))
+			: deepCloneDefaults().vaultLists,
+		rowLayouts: Array.isArray(data.rowLayouts)
+			? data.rowLayouts.map((r) => ({ ...r, slots: r.slots ? [...r.slots] : [] }))
+			: deepCloneDefaults().rowLayouts,
+		columnLayouts: Array.isArray(data.columnLayouts)
+			? data.columnLayouts.map((s) => ({ ...s, slots: s.slots ? [...s.slots] : [] }))
+			: deepCloneDefaults().columnLayouts,
+		excludeFolders: _resolveExcludeFolders(data, splitCsv),
+		dividerDesign:
+			data.dividerDesign && typeof data.dividerDesign === "object"
+				? { ...deepCloneDefaults().dividerDesign, ...data.dividerDesign }
+				: deepCloneDefaults().dividerDesign,
+		rowSizes:
+			data.rowSizes && typeof data.rowSizes === "object"
+				? { ...data.rowSizes }
+				: {},
+	};
+}
+
+function _resolveExcludeFolders(
+	data: Partial<NexusSettings>,
+	splitCsv?: (val: string) => string[],
+): string[] {
+	if (Array.isArray(data.excludeFolders)) return [...data.excludeFolders];
+	if (typeof data.excludeFolders === "string" && splitCsv) return splitCsv(data.excludeFolders);
+	return [];
 }
 
 /** Named divider style presets that users can select from the settings UI. */

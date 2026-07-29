@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.2.2-beta.2
+
+### Added
+
+- **Task Summary block** — new `tasks:` code block keyword with completion stats, progress bar, and grouped open-task list (filterable by path and frontmatter tags)
+- **`mergeSettings()`** — centralized settings loader replacing the 170-line manual `loadSettings()` block; every new setting field is handled automatically
+
+### Changed
+
+- **Quicklinks** — card-style items (favicon, label, description) replaced with compact pills
+- **Vault Activity** — folder path removed; shows only filename + relative time
+- **Timeline** — tighter line-height/padding, removed min-width constraints
+
+### Fixed
+
+- **Heatmap grid layout** — swapped day/week loop nesting so cells fill column-by-column instead of row-by-row
+- **Heatmap month labels** — grouped consecutive weeks by month with `grid-column: span` for correct alignment; added gutter spacer column
+
+### Developer
+
+- `saveAndRefresh()` in settings fixed (was calling itself recursively)
+- `renderDividerPreview()` accepts optional `labelText` parameter
+
+---
+
 ## v1.2.2-beta.1
 
 ### Added

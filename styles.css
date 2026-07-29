@@ -960,106 +960,36 @@
 }
 
 /* ============================================================
-   Nexus Links — Quick links grid
+   Nexus Links — Quick links pills
    ============================================================ */
 
 .nexus-links {
   margin-bottom: 1.5rem;
 }
 
-.nexus-links-grid {
-  display: grid;
-  gap: 8px;
+.nexus-links-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-top: 0.5rem;
 }
 
-.nexus-links-grid--cols-1 {
-  grid-template-columns: 1fr;
-}
-
-.nexus-links-grid--cols-2 {
-  grid-template-columns: repeat(2, 1fr);
-}
-
-.nexus-links-grid--cols-3 {
-  grid-template-columns: repeat(3, 1fr);
-}
-
-.nexus-links-grid--cols-4 {
-  grid-template-columns: repeat(4, 1fr);
-}
-
-.nexus-link-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  background: var(--background-secondary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  text-decoration: none !important;
-  color: var(--text-normal) !important;
-  cursor: pointer;
-  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
-}
-
-.nexus-link-item:hover {
-  transform: translateY(-1px);
-  border-color: var(--interactive-accent);
+.nexus-link-pill {
+  display: inline-flex;
+  padding: 3px 12px;
+  border-radius: 999px;
   background: var(--background-modifier-hover);
-  box-shadow: 0 2px 8px var(--background-modifier-box-shadow, rgba(0, 0, 0, 0.06));
-}
-
-.nexus-link-item:active {
-  transform: translateY(0) scale(0.985);
-}
-
-.nexus-link-item:visited {
-  color: var(--text-normal) !important;
-}
-
-.nexus-link-favicon {
-  width: 20px;
-  height: 20px;
-  flex-shrink: 0;
-  border-radius: 3px;
-  object-fit: contain;
-}
-
-.nexus-link-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  flex: 1;
-}
-
-.nexus-links-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.nexus-link-label {
-  font-size: var(--font-ui-small);
-  font-weight: 500;
-  color: var(--text-normal);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: color 0.15s ease;
-}
-
-.nexus-link-item:hover .nexus-link-label {
-  color: var(--interactive-accent);
-}
-
-.nexus-link-desc {
-  font-size: 0.65rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  text-decoration: none !important;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+  line-height: 1.5;
+}
+
+.nexus-link-pill:hover {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
 }
 
 /* ============================================================
@@ -1359,12 +1289,8 @@
     display: none;
   }
 
-  .nexus-links-grid,
-  .nexus-links-grid--cols-1,
-  .nexus-links-grid--cols-2,
-  .nexus-links-grid--cols-3,
-  .nexus-links-grid--cols-4 {
-    grid-template-columns: 1fr;
+  .nexus-links-pills {
+    gap: 4px;
   }
 
 }
@@ -1379,7 +1305,7 @@
 
 .nexus-heatmap-months {
   display: grid;
-  grid-template-columns: 30px repeat(var(--nexus-heatmap-weeks, 20), 1fr);
+  grid-template-columns: 32px repeat(var(--nexus-heatmap-weeks, 20), 1fr);
   gap: 2px;
   margin-bottom: 2px;
 }
@@ -1388,6 +1314,7 @@
   font-size: 0.6rem;
   color: var(--text-muted);
   line-height: 1;
+  text-align: center;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -1408,8 +1335,10 @@
 .nexus-heatmap-day-label {
   font-size: 0.55rem;
   color: var(--text-faint);
-  line-height: 12px;
-  text-align: right;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   padding-right: 4px;
 }
 
@@ -1484,7 +1413,7 @@
 .nexus-timeline {
   font-family: "JetBrains Mono NL", "Fira Code", "Cascadia Code", monospace;
   font-size: 0.72rem;
-  line-height: 1.7;
+  line-height: 1.4;
   margin-top: 0.5rem;
   max-height: 400px;
   overflow-y: auto;
@@ -1493,28 +1422,24 @@
 .nexus-timeline-row {
   display: flex;
   gap: 0;
-  padding: 2px 4px;
+  padding: 1px 3px;
   cursor: pointer;
-  transition: background 0.1s ease, border-color 0.15s ease;
+  transition: background 0.1s ease;
   border-radius: 6px;
-  border: 1px solid transparent;
 }
 
 .nexus-timeline-row:hover {
   background: var(--background-modifier-hover);
-  border-color: var(--background-modifier-border);
 }
 
 .nexus-timeline-time {
   color: var(--text-faint);
-  min-width: 42px;
-  flex-shrink: 0;
+  margin-right: 1.5ch;
 }
 
 .nexus-timeline-action {
-  min-width: 72px;
-  flex-shrink: 0;
   font-weight: 500;
+  margin-right: 1.5ch;
 }
 
 .nexus-timeline-action--created {
@@ -1558,13 +1483,11 @@
   padding: 4px 6px;
   cursor: pointer;
   border-radius: 6px;
-  border: 1px solid transparent;
-  transition: background 0.1s ease, border-color 0.15s ease;
+  transition: background 0.1s ease;
 }
 
 .nexus-vault-activity-row:hover {
   background: var(--background-modifier-hover);
-  border-color: var(--background-modifier-border);
 }
 
 .nexus-vault-activity-name {
@@ -1576,16 +1499,6 @@
   text-overflow: ellipsis;
   min-width: 0;
   flex: 1;
-}
-
-.nexus-vault-activity-path {
-  font-size: 0.7rem;
-  color: var(--text-faint);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-  min-width: 0;
 }
 
 .nexus-vault-activity-time {
@@ -1722,5 +1635,212 @@
 
   .nexus-filetypes-count {
     font-size: 0.65rem;
+  }
+}
+
+/* ── Task Summary ──────────────────────────────────── */
+
+.nexus-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.nexus-tasks-stats {
+  display: flex;
+  gap: 1.5rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.nexus-tasks-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.nexus-tasks-stat-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--text-normal);
+  line-height: 1;
+}
+
+.nexus-tasks-stat-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+/* Progress bar */
+.nexus-tasks-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-top: 0.25rem;
+}
+
+.nexus-tasks-progress-track {
+  flex: 1;
+  height: 6px;
+  background: var(--background-modifier-border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.nexus-tasks-progress-fill {
+  height: 100%;
+  background: var(--interactive-accent);
+  border-radius: 3px;
+  transition: width 0.5s ease;
+}
+
+.nexus-tasks-progress-pct {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Task list */
+.nexus-tasks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 320px;
+  overflow-y: auto;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to bottom, black 85%, transparent 100%);
+  mask-image: linear-gradient(to bottom, black 85%, transparent 100%);
+}
+
+.nexus-tasks-list::-webkit-scrollbar {
+  display: none;
+}
+
+/* File group */
+.nexus-tasks-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.nexus-tasks-group-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+  user-select: none;
+}
+
+.nexus-tasks-group-header:hover {
+  background: var(--background-modifier-hover);
+}
+
+.nexus-tasks-group-name {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.nexus-tasks-group-count {
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--text-faint);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 0 0.3rem;
+  line-height: 1.4;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.nexus-tasks-group-time {
+  font-size: 0.65rem;
+  color: var(--text-faint);
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* Task item — compact single-line */
+.nexus-tasks-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.5rem 0.2rem 1.2rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+  position: relative;
+}
+
+.nexus-tasks-item:hover {
+  background: var(--background-modifier-hover);
+}
+
+.nexus-tasks-item::before {
+  content: "\2610";
+  flex-shrink: 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  position: absolute;
+  left: 0.35rem;
+}
+
+.nexus-tasks-item-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.8rem;
+  color: var(--text-normal);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* More link */
+.nexus-tasks-more {
+  text-align: center;
+  padding: 0.3rem 0;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+/* Empty state */
+.nexus-tasks-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 1.5rem 0;
+}
+
+.nexus-tasks-empty-text {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.nexus-tasks-empty-path {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+}
+
+@media (max-width: 600px) {
+  .nexus-tasks-stats {
+    gap: 4px;
+  }
+
+  .nexus-tasks-item-text {
+    font-size: 0.75rem;
   }
 }

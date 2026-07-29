@@ -17,6 +17,7 @@ import {
 	TimelineConfig,
 	ClockConfig,
 	FileTypeChartConfig,
+	TaskSummaryConfig,
 } from "./types";
 import {
 	ensureExtension as ensureExt,
@@ -63,7 +64,8 @@ type ParseContext =
 	| "heatmap"
 	| "timeline"
 	| "clock"
-	| "filetypes";
+	| "filetypes"
+	| "tasks";
 
 export function parseDashboard(raw: string): DashboardConfig {
 	const trimmed = raw.trim();
@@ -99,6 +101,7 @@ export function parseDashboard(raw: string): DashboardConfig {
 	let currentTimeline: TimelineConfig | null = null;
 	let currentClock: ClockConfig | null = null;
 	let currentFileTypeChart: FileTypeChartConfig | null = null;
+	let currentTaskSummary: TaskSummaryConfig | null = null;
 
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i].replace(/\r$/, "");
@@ -110,7 +113,7 @@ export function parseDashboard(raw: string): DashboardConfig {
 		if (t.startsWith("- ")) {
 			const stripped = t.slice(2);
 			if (
-				/^(header|stats|graph|divider|section|links|row|column|search|recently|vaultlist|vault-activity):/.test(
+				/^(header|stats|graph|divider|section|links|row|column|search|recently|vaultlist|vault-activity|filetypes|heatmap|timeline|clock|tasks):/.test(
 					stripped,
 				)
 			) {
@@ -328,6 +331,13 @@ export function parseDashboard(raw: string): DashboardConfig {
 			currentFileTypeChart = { kind: "filetypes", show: true };
 			continue;
 		}
+		if (t === "tasks:") {
+			flushCurrent();
+			flushColumn();
+			context = "tasks";
+			currentTaskSummary = { kind: "tasks", show: true };
+			continue;
+		}
 
 		// ── New card entry ────────────────────────────────
 		if (t.startsWith("- type:")) {
@@ -453,6 +463,9 @@ export function parseDashboard(raw: string): DashboardConfig {
 			case "filetypes":
 				if (currentFileTypeChart) applyFileTypeChartKV(currentFileTypeChart, kv);
 				break;
+			case "tasks":
+				if (currentTaskSummary) applyTaskSummaryKV(currentTaskSummary, kv);
+				break;
 		case "vault-activity":
 			if (currentVaultActivity) {
 				applyListConfigKV(currentVaultActivity, kv, {
@@ -486,6 +499,7 @@ export function parseDashboard(raw: string): DashboardConfig {
 		flushTimeline();
 		flushClock();
 		flushFileTypeChart();
+		flushTaskSummary();
 	}
 
 	function flushCard() {
@@ -646,6 +660,13 @@ export function parseDashboard(raw: string): DashboardConfig {
 			currentFileTypeChart = null;
 		}
 	}
+
+	function flushTaskSummary() {
+		if (currentTaskSummary) {
+			config.blocks.push(currentTaskSummary);
+			currentTaskSummary = null;
+		}
+	}
 }
 
 // ── KV apply helpers ─────────────────────────────────────
@@ -734,6 +755,19 @@ function applyFileTypeChartKV(chart: FileTypeChartConfig, kv: { key: string; val
 		chart.max = Number.isFinite(n) && n > 0 ? n : undefined;
 	}
 	if (kv.key === "label") chart.label = kv.value;
+}
+
+function applyTaskSummaryKV(ts: TaskSummaryConfig, kv: { key: string; value: string }) {
+	if (kv.key === "show") ts.show = kv.value === "true";
+	if (kv.key === "progress") ts.showProgress = kv.value === "true";
+	if (kv.key === "showList") ts.showList = kv.value === "true";
+	if (kv.key === "count") {
+		const n = parseInt(kv.value, 10);
+		ts.count = Number.isFinite(n) && n > 0 ? n : undefined;
+	}
+	if (kv.key === "path") ts.path = kv.value;
+	if (kv.key === "tags") ts.tags = splitCsv(kv.value);
+	if (kv.key === "label") ts.label = kv.value;
 }
 
 // ── Recently context detection ───────────────────────────

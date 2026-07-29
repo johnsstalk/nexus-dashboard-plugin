@@ -1,12 +1,12 @@
 /**
  * Union of all dashboard block types that can appear in the layout.
  */
-export type DashboardBlock = DividerBlockConfig | SectionConfig | RecentlyConfig | VaultListConfig | VaultActivityConfig | RowConfig | ColumnConfig | LinksConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | HeatmapConfig | TimelineConfig | ClockConfig | FileTypeChartConfig;
+export type DashboardBlock = DividerBlockConfig | SectionConfig | RecentlyConfig | VaultListConfig | VaultActivityConfig | RowConfig | ColumnConfig | LinksConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | HeatmapConfig | TimelineConfig | ClockConfig | FileTypeChartConfig | TaskSummaryConfig;
 
 /**
  * Valid identifiers for named content slots used in row and column layouts.
  */
-export type ContentSlotType = "stats" | "search" | "heading" | "moc-cards" | "quick-links" | "vault-activity" | "divider" | "heatmap" | "timeline" | "clock" | "filetypes" | "none";
+export type ContentSlotType = "stats" | "search" | "heading" | "moc-cards" | "quick-links" | "vault-activity" | "divider" | "heatmap" | "timeline" | "clock" | "filetypes" | "tasks" | "none";
 
 /** Root configuration object for the entire dashboard layout. */
 export interface DashboardConfig {
@@ -138,7 +138,7 @@ export interface RowConfig {
 	 * Ordered child blocks rendered left-to-right inside this row.
 	 * @remarks Cannot contain nested `RowConfig` — use `ColumnConfig` for nesting.
 	 */
-	children: (SectionConfig | ColumnConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | VaultListConfig | VaultActivityConfig | LinksConfig | HeatmapConfig | TimelineConfig | ClockConfig | FileTypeChartConfig)[];
+	children: (SectionConfig | ColumnConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | VaultListConfig | VaultActivityConfig | LinksConfig | HeatmapConfig | TimelineConfig | ClockConfig | FileTypeChartConfig | TaskSummaryConfig)[];
 }
 
 /**
@@ -154,7 +154,7 @@ export interface ColumnConfig {
 	/**
 	 * Ordered child blocks rendered top-to-bottom inside this column.
 	 */
-	children: (SectionConfig | RowConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | VaultListConfig | VaultActivityConfig | LinksConfig | HeatmapConfig | TimelineConfig | ClockConfig | FileTypeChartConfig)[];
+	children: (SectionConfig | RowConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | VaultListConfig | VaultActivityConfig | LinksConfig | HeatmapConfig | TimelineConfig | ClockConfig | FileTypeChartConfig | TaskSummaryConfig)[];
 }
 
 /** Configuration for the search bar widget. */
@@ -289,6 +289,24 @@ export interface FileTypeChartConfig {
 	/** Maximum number of file types to display in the chart. */
 	max?: number;
 	/** Custom heading label displayed above the chart. */
+	label?: string;
+}
+
+/** Configuration for the task summary widget. */
+export interface TaskSummaryConfig {
+	kind: "tasks";
+	show: boolean;
+	/** Show the progress bar below stats. */
+	showProgress?: boolean;
+	/** Show the scrollable unchecked task list. */
+	showList?: boolean;
+	/** Maximum number of tasks to display in the list. */
+	count?: number;
+	/** Vault-relative folder path to filter tasks (e.g. "Knowledge/Tasks & Action Management"). */
+	path?: string;
+	/** Frontmatter tags to filter task files. */
+	tags?: string[];
+	/** Custom heading label displayed above the task summary. */
 	label?: string;
 }
 
@@ -496,6 +514,20 @@ export interface NexusSettings {
 	fileTypeChartMax: number;
 	/** Custom heading label for the file-type chart. */
 	fileTypeChartLabel: string;
+	/** Whether the task summary widget is visible. */
+	showTaskSummary: boolean;
+	/** Whether to show the progress bar in the task summary. */
+	taskSummaryShowProgress: boolean;
+	/** Whether to show the unchecked task list in the task summary. */
+	taskSummaryShowList: boolean;
+	/** Vault-relative folder path to filter tasks. */
+	taskSummaryPath: string;
+	/** Comma-separated frontmatter tags used to filter task files. */
+	taskSummaryTags: string;
+	/** Maximum number of tasks to display in the list. */
+	taskSummaryCount: number;
+	/** Custom heading label for the task summary. */
+	taskSummaryLabel: string;
 	/** Whether the vault-activity section is visible. */
 	showVaultActivity: boolean;
 	/** Maximum number of entries in the vault-activity list. */

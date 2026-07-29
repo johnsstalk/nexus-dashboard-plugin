@@ -8,6 +8,7 @@ import {
 	DIVIDER_PRESET_NAMES,
 	detectDividerPreset,
 	deepCloneDefaults,
+	mergeSettings,
 } from "../defaults";
 import type { DividerDesign } from "../types";
 
@@ -117,6 +118,82 @@ describe("deepCloneDefaults", () => {
 		const clone = deepCloneDefaults();
 		clone.headerText = "MODIFIED";
 		clone.mocs.push({ path: "test", title: "test", desc: "test", icon: "test" });
+		expect(DEFAULT_SETTINGS.headerText).toBe("NEXUS");
+		expect(DEFAULT_SETTINGS.mocs).toHaveLength(6);
+	});
+});
+
+describe("mergeSettings", () => {
+	const splitCsv = (val: string) => val.split(",").map((s) => s.trim());
+
+	it("returns deep-cloned defaults when data is null", () => {
+		const result = mergeSettings(null, splitCsv);
+		expect(result.headerText).toBe("NEXUS");
+		expect(result).not.toBe(DEFAULT_SETTINGS);
+		expect(result.mocs).not.toBe(DEFAULT_SETTINGS.mocs);
+	});
+
+	it("returns deep-cloned defaults when data is undefined", () => {
+		const result = mergeSettings(undefined, splitCsv);
+		expect(result.headerText).toBe("NEXUS");
+	});
+
+	it("overlays scalar fields from partial data", () => {
+		const result = mergeSettings({ headerText: "CUSTOM", showStats: false }, splitCsv);
+		expect(result.headerText).toBe("CUSTOM");
+		expect(result.showStats).toBe(false);
+		expect(result.openOnStartup).toBe(false); // from defaults
+	});
+
+	it("deep-clones array fields from partial data", () => {
+		const result = mergeSettings({ mocs: [{ path: "a", title: "A", desc: "desc", icon: "!" }] }, splitCsv);
+		expect(result.mocs).toHaveLength(1);
+		expect(result.mocs[0].path).toBe("a");
+	});
+
+	it("deep-clones dividerDesign", () => {
+		const result = mergeSettings({ dividerDesign: { gradient: "custom" } }, splitCsv);
+		expect(result.dividerDesign.gradient).toBe("custom");
+		expect(result.dividerDesign.lineWidth).toBe(DEFAULT_SETTINGS.dividerDesign.lineWidth);
+	});
+
+	it("handles excludeFolders as array", () => {
+		const result = mergeSettings({ excludeFolders: ["a", "b"] }, splitCsv);
+		expect(result.excludeFolders).toEqual(["a", "b"]);
+	});
+
+	it("handles excludeFolders as CSV string", () => {
+		const result = mergeSettings({ excludeFolders: "a, b, c" }, splitCsv);
+		expect(result.excludeFolders).toEqual(["a", "b", "c"]);
+	});
+
+	it("handles excludeFolders missing", () => {
+		const result = mergeSettings({}, splitCsv);
+		expect(result.excludeFolders).toEqual([]);
+	});
+
+	it("preserves task summary fields", () => {
+		const result = mergeSettings({
+			showTaskSummary: false,
+			taskSummaryPath: "Custom/Path",
+			taskSummaryCount: 5,
+		}, splitCsv);
+		expect(result.showTaskSummary).toBe(false);
+		expect(result.taskSummaryPath).toBe("Custom/Path");
+		expect(result.taskSummaryCount).toBe(5);
+		expect(result.taskSummaryShowProgress).toBe(true);
+	});
+
+	it("preserves vault activity fields", () => {
+		const result = mergeSettings({ vaultActivityLabel: "CUSTOM LABEL" }, splitCsv);
+		expect(result.vaultActivityLabel).toBe("CUSTOM LABEL");
+		expect(result.vaultActivityCount).toBe(9);
+	});
+
+	it("mutating result does not affect defaults", () => {
+		const result = mergeSettings({ headerText: "X" }, splitCsv);
+		result.headerText = "Y";
+		result.mocs.push({ path: "t", title: "t", desc: "t", icon: "t" });
 		expect(DEFAULT_SETTINGS.headerText).toBe("NEXUS");
 		expect(DEFAULT_SETTINGS.mocs).toHaveLength(6);
 	});

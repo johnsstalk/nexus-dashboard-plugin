@@ -25,6 +25,7 @@ import {
 	TimelineConfig,
 	ClockConfig,
 	FileTypeChartConfig,
+	TaskSummaryConfig,
 } from "./types";
 
 export class NexusRenderer extends MarkdownRenderChild {
@@ -195,6 +196,9 @@ export class NexusRenderer extends MarkdownRenderChild {
 				break;
 			case "filetypes":
 				this.renderFileTypeChart(containerEl, block);
+				break;
+			case "tasks":
+				await this.renderTaskSummary(containerEl, block);
 				break;
 		}
 	}
@@ -412,16 +416,29 @@ export class NexusRenderer extends MarkdownRenderChild {
 						format: opts.clockFormat,
 						label: opts.clockLabel,
 					} as ClockConfig;
-				case "filetypes":
-					if (!opts.showFileTypeChart) return null;
-					placed.add("filetypes");
-					return {
-						kind: "filetypes",
-						show: true,
-						max: opts.fileTypeChartMax,
-						label: opts.fileTypeChartLabel,
-					} as FileTypeChartConfig;
-				default:
+			case "filetypes":
+				if (!opts.showFileTypeChart) return null;
+				placed.add("filetypes");
+				return {
+					kind: "filetypes",
+					show: true,
+					max: opts.fileTypeChartMax,
+					label: opts.fileTypeChartLabel,
+				} as FileTypeChartConfig;
+			case "tasks":
+				if (!opts.showTaskSummary) return null;
+				placed.add("tasks");
+				return {
+					kind: "tasks",
+					show: true,
+					showProgress: opts.taskSummaryShowProgress,
+					showList: opts.taskSummaryShowList,
+					count: opts.taskSummaryCount,
+					path: opts.taskSummaryPath,
+					tags: opts.taskSummaryTags ? splitCsv(opts.taskSummaryTags) : undefined,
+					label: opts.taskSummaryLabel,
+				} as TaskSummaryConfig;
+			default:
 					return null;
 			}
 		};
@@ -580,6 +597,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 		for (const block of blocks) {
 			if (block.kind === "stats") placed.add("stats");
 			if (block.kind === "search") placed.add("search");
+			if (block.kind === "tasks") placed.add("tasks");
 			if (block.kind === "row" || block.kind === "column") {
 				this.scanBlocksForPlaced(block.children, placed);
 			}
@@ -693,35 +711,14 @@ export class NexusRenderer extends MarkdownRenderChild {
 			this.renderDivider(wrapper, links.title);
 		}
 
-		const listEl = wrapper.createDiv({ cls: "nexus-links-list" });
+		const pillsEl = wrapper.createDiv({ cls: "nexus-links-pills" });
 
 		for (const item of links.items) {
-			const itemEl = listEl.createEl("a", { cls: "nexus-link-item" });
-			itemEl.href = item.url;
-			itemEl.target = "_blank";
-			itemEl.rel = "noopener";
-
-			// Favicon
-			try {
-				const domain = new URL(item.url).hostname;
-				const faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
-				const faviconEl = itemEl.createEl("img", {
-					cls: "nexus-link-favicon",
-					attr: { src: faviconUrl, alt: "", loading: "lazy" },
-				});
-				faviconEl.onerror = () => faviconEl.remove();
-			} catch {
-				// Invalid URL, skip favicon
-			}
-
-			// Text content
-			const textEl = itemEl.createDiv({ cls: "nexus-link-text" });
-			const label = item.label || item.url;
-			textEl.createEl("span", { text: label, cls: "nexus-link-label" });
-
-			if (item.desc) {
-				textEl.createEl("span", { text: item.desc, cls: "nexus-link-desc" });
-			}
+			const pill = pillsEl.createEl("a", { cls: "nexus-link-pill" });
+			pill.href = item.url;
+			pill.target = "_blank";
+			pill.rel = "noopener";
+			pill.textContent = item.label || item.url;
 		}
 	}
 
@@ -1077,15 +1074,6 @@ export class NexusRenderer extends MarkdownRenderChild {
 				cls: "nexus-vault-activity-name",
 			});
 
-			const pathParts = file.path.split("/");
-			const folder = pathParts.length > 1 ? pathParts.slice(0, -1).join("/") : "";
-			if (folder) {
-				row.createEl("span", {
-					text: folder,
-					cls: "nexus-vault-activity-path",
-				});
-			}
-
 			row.createEl("span", {
 				text: relativeTime(file.stat.mtime),
 				cls: "nexus-vault-activity-time",
@@ -1135,8 +1123,8 @@ export class NexusRenderer extends MarkdownRenderChild {
 
 		// Normalize maxCount to displayed range only
 		let maxCount = 0;
-		for (let w = 0; w < weeks; w++) {
-			for (let d = 0; d < 7; d++) {
+		for (let d = 0; d < 7; d++) {
+			for (let w = 0; w < weeks; w++) {
 				const cellDate = new Date(startDate);
 				cellDate.setDate(cellDate.getDate() + w * 7 + d);
 				if (cellDate > today) continue;
@@ -1155,9 +1143,8 @@ export class NexusRenderer extends MarkdownRenderChild {
 		const heatmapEl = wrapper.createDiv({ cls: "nexus-heatmap" });
 		heatmapEl.style.setProperty("--nexus-heatmap-weeks", String(weeks));
 
-		// Month labels row
+		// Month labels row — one spanned label per month
 		const monthRow = heatmapEl.createDiv({ cls: "nexus-heatmap-months" });
-		let lastMonth = -1;
 		const monthNames = [
 			"Jan",
 			"Feb",
@@ -1172,15 +1159,32 @@ export class NexusRenderer extends MarkdownRenderChild {
 			"Nov",
 			"Dec",
 		];
+
+		// Empty spacer for day-label gutter alignment
+		const gutter = monthRow.createDiv({ cls: "nexus-heatmap-month-spacer" });
+		gutter.style.visibility = "hidden";
+
+		// Group consecutive weeks by month
+		const monthCounts: { month: number; count: number }[] = [];
+		let curMonth = -1;
 		for (let w = 0; w < weeks; w++) {
 			const weekStart = new Date(startDate);
 			weekStart.setDate(weekStart.getDate() + w * 7);
-			const month = weekStart.getMonth();
-			const spacer = monthRow.createDiv({ cls: "nexus-heatmap-month-spacer" });
-			if (month !== lastMonth) {
-				spacer.textContent = monthNames[month];
-				lastMonth = month;
+			const m = weekStart.getMonth();
+			if (m !== curMonth) {
+				monthCounts.push({ month: m, count: 1 });
+				curMonth = m;
+			} else {
+				monthCounts[monthCounts.length - 1].count++;
 			}
+		}
+
+		let col = 2;
+		for (const g of monthCounts) {
+			const spacer = monthRow.createDiv({ cls: "nexus-heatmap-month-spacer" });
+			spacer.textContent = monthNames[g.month];
+			spacer.style.gridColumn = `${col} / span ${g.count}`;
+			col += g.count;
 		}
 
 		// Day labels + grid
@@ -1195,8 +1199,8 @@ export class NexusRenderer extends MarkdownRenderChild {
 		const gridEl = bodyEl.createDiv({ cls: "nexus-heatmap-grid" });
 		gridEl.style.gridTemplateColumns = `repeat(${weeks}, 1fr)`;
 
-		for (let w = 0; w < weeks; w++) {
-			for (let d = 0; d < 7; d++) {
+		for (let d = 0; d < 7; d++) {
+			for (let w = 0; w < weeks; w++) {
 				const cellDate = new Date(startDate);
 				cellDate.setDate(cellDate.getDate() + w * 7 + d);
 				const key = `${cellDate.getFullYear()}-${String(cellDate.getMonth() + 1).padStart(2, "0")}-${String(cellDate.getDate()).padStart(2, "0")}`;
@@ -1443,6 +1447,182 @@ export class NexusRenderer extends MarkdownRenderChild {
 			const pctText = total > 0 ? Math.round((count / total) * 100) : 0;
 			row.createEl("span", { text: `${pctText}%`, cls: "nexus-filetypes-pct" });
 		}
+	}
+
+	// ── Render: Task Summary ─────────────────────────────────
+
+	private async renderTaskSummary(containerEl: HTMLElement, config: TaskSummaryConfig): Promise<void> {
+		const label = config.label || "TASKS";
+		const showProgress = config.showProgress !== false;
+		const showList = config.showList !== false;
+		const maxList = config.count || 10;
+		const filterPath = config.path || "";
+		const filterTags = config.tags || [];
+
+		const files = this.plugin.app.vault.getMarkdownFiles();
+		const filtered = files.filter((f) => {
+			if (filterPath && !f.path.startsWith(filterPath)) return false;
+			if (filterTags.length > 0) {
+				const cache = this.plugin.app.metadataCache.getFileCache(f);
+				const fileTags = (cache?.frontmatter?.tags as string[]) || [];
+				const hasTag = filterTags.some((t) => fileTags.includes(t));
+				if (!hasTag) return false;
+			}
+			return true;
+		});
+
+		let total = 0;
+		let done = 0;
+		const openTasks: { text: string; file: TFile; line: number }[] = [];
+
+		for (const file of filtered) {
+			const cache = this.plugin.app.metadataCache.getFileCache(file);
+			const items = cache?.listItems;
+			if (!items) continue;
+
+			const raw = await this.plugin.app.vault.cachedRead(file);
+			const lines = raw.split("\n");
+
+			for (const item of items) {
+				if (item.task === undefined) continue;
+				total++;
+				if (item.task === "x") {
+					done++;
+				} else {
+					const lineIdx = item.position.start.line;
+					const rawLine = lines[lineIdx] || "";
+					const taskText = rawLine.replace(/^[\s\-*\d.]*\[[ xX]\]\s*/, "").trim();
+					if (taskText) {
+						openTasks.push({ text: taskText, file, line: lineIdx });
+					}
+				}
+			}
+		}
+
+		// Sort tasks by file mtime (latest first), then by line number within file
+		openTasks.sort((a, b) => {
+			const timeDiff = b.file.stat.mtime - a.file.stat.mtime;
+			if (timeDiff !== 0) return timeDiff;
+			return a.line - b.line;
+		});
+
+		const remaining = total - done;
+		const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+
+		const wrapper = containerEl.createDiv({ cls: "nexus-section" });
+		if (label) {
+			this.renderDivider(wrapper, label);
+		}
+
+		const taskEl = wrapper.createDiv({ cls: "nexus-tasks" });
+
+		// Empty state
+		if (total === 0) {
+			const emptyEl = taskEl.createDiv({ cls: "nexus-tasks-empty" });
+			emptyEl.createEl("span", { text: "No tasks found", cls: "nexus-tasks-empty-text" });
+			if (filterPath) {
+				emptyEl.createEl("span", { text: `in ${filterPath}`, cls: "nexus-tasks-empty-path" });
+			}
+			return;
+		}
+
+		// Stats row
+		const statsRow = taskEl.createDiv({ cls: "nexus-tasks-stats" });
+		const statItems = [
+			{ value: String(total), label: "Total" },
+			{ value: String(done), label: "Done" },
+			{ value: String(remaining), label: "Open" },
+			{ value: `${pct}%`, label: "" },
+		];
+		for (const stat of statItems) {
+			const statEl = statsRow.createDiv({ cls: "nexus-tasks-stat" });
+			statEl.createEl("span", { text: stat.value, cls: "nexus-tasks-stat-value" });
+			if (stat.label) {
+				statEl.createEl("span", { text: stat.label, cls: "nexus-tasks-stat-label" });
+			}
+		}
+
+		// Progress bar with % label to the right
+		if (showProgress) {
+			const progressEl = taskEl.createDiv({ cls: "nexus-tasks-progress" });
+			const track = progressEl.createDiv({ cls: "nexus-tasks-progress-track" });
+			const fill = track.createDiv({ cls: "nexus-tasks-progress-fill" });
+			fill.style.width = `${pct}%`;
+			progressEl.createEl("span", { text: `${pct}%`, cls: "nexus-tasks-progress-pct" });
+		}
+
+		// Task list — grouped by file
+		if (showList && openTasks.length > 0) {
+			// Group by file path
+			const grouped = new Map<string, { file: TFile; tasks: typeof openTasks }>();
+			for (const task of openTasks) {
+				const key = task.file.path;
+			if (!grouped.has(key)) {
+				grouped.set(key, { file: task.file, tasks: [] });
+			}
+			const group = grouped.get(key);
+			if (group) group.tasks.push(task);
+			}
+
+			const listEl = taskEl.createDiv({ cls: "nexus-tasks-list" });
+			let shownTasks = 0;
+
+			for (const [, group] of grouped) {
+				if (shownTasks >= maxList) break;
+
+				const groupEl = listEl.createDiv({ cls: "nexus-tasks-group" });
+
+				// File header
+				const headerEl = groupEl.createDiv({ cls: "nexus-tasks-group-header" });
+				const age = this.getRelativeTime(group.file.stat.mtime);
+				headerEl.createEl("span", { text: group.file.basename, cls: "nexus-tasks-group-name" });
+				headerEl.createEl("span", { text: `${group.tasks.length} task${group.tasks.length > 1 ? "s" : ""}`, cls: "nexus-tasks-group-count" });
+				headerEl.createEl("span", { text: age, cls: "nexus-tasks-group-time" });
+				headerEl.addEventListener("click", (e) => {
+					e.preventDefault();
+					this.plugin.app.workspace.openLinkText(group.file.path, "");
+				});
+
+				// Task items under this file
+				const tasksToShow = group.tasks.slice(0, maxList - shownTasks);
+				shownTasks += tasksToShow.length;
+
+				for (const task of tasksToShow) {
+					const itemEl = groupEl.createDiv({ cls: "nexus-tasks-item" });
+					const textEl = itemEl.createDiv({ cls: "nexus-tasks-item-text" });
+					textEl.textContent = task.text;
+
+					// Click to open file at task line
+					itemEl.addEventListener("click", (e) => {
+						e.preventDefault();
+						this.plugin.app.workspace.openLinkText(task.file.path, "", false, {
+							line: task.line,
+						});
+					});
+				}
+			}
+
+			// Remaining count
+			const totalOpen = openTasks.length;
+			if (shownTasks < totalOpen) {
+				const moreEl = listEl.createDiv({ cls: "nexus-tasks-more" });
+				moreEl.createEl("span", { text: `+${totalOpen - shownTasks} more` });
+			}
+		}
+	}
+
+	/** Get a relative time string for a given mtime */
+	private getRelativeTime(mtime: number): string {
+		const now = Date.now();
+		const diff = now - mtime;
+		const minutes = Math.floor(diff / 60000);
+		const hours = Math.floor(diff / 3600000);
+		const days = Math.floor(diff / 86400000);
+		if (minutes < 1) return "just now";
+		if (minutes < 60) return `${minutes}m ago`;
+		if (hours < 24) return `${hours}h ago`;
+		if (days < 7) return `${days}d ago`;
+		return `${Math.floor(days / 7)}w ago`;
 	}
 
 	// ── Render: Graph Links ────────────────────────────────────
