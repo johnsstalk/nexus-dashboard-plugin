@@ -69,6 +69,7 @@ export const DEFAULT_SETTINGS: NexusSettings = {
 	showMocDivider: false,
 	mocDividerLabel: "MOC CARDS",
 	showQuickLinks: false,
+	showBookmarksAsLinks: false,
 	showHeatmap: true,
 	heatmapWeeks: 10,
 	heatmapLabel: "CONTRIBUTION ACTIVITY",
@@ -85,10 +86,25 @@ export const DEFAULT_SETTINGS: NexusSettings = {
 	fileTypeChartMax: 8,
 	fileTypeChartLabel: "FILE TYPES",
 	showVaultActivity: true,
-	vaultActivityCount: 9,
-	vaultActivityPath: "",
-	vaultActivityTags: "",
+	vaultActivityCount: 15,
 	vaultActivityLabel: "VAULT ACTIVITY",
+	vaultActivityShowFade: true,
+	vaultActivityMaxHeight: 320,
+	activityTimelineShowFade: true,
+	activityTimelineMaxHeight: 320,
+	activityLog: [],
+	activityLogMax: 500,
+	activityTrackingEnabled: true,
+	activityTaskTracking: true,
+	activityTimelineOnlyMarkdown: true,
+	activityTimelineIncludeFolders: "",
+	activityTimelineShowRelative: false,
+	activityTimelineGroup: "day",
+	activityTimelineShowDate: true,
+	activityTimelineShowChips: false,
+	activityTimelineShowMore: true,
+	taskSummaryShowFade: true,
+	taskSummaryMaxHeight: 320,
 	showTaskSummary: true,
 	taskSummaryShowProgress: true,
 	taskSummaryShowList: true,
@@ -121,6 +137,7 @@ export function deepCloneDefaults(): NexusSettings {
 		rowSizes: { ...DEFAULT_SETTINGS.rowSizes },
 		rowLayouts: DEFAULT_SETTINGS.rowLayouts.map((r) => ({ ...r, slots: [...r.slots] })),
 		columnLayouts: DEFAULT_SETTINGS.columnLayouts.map((s) => ({ ...s, slots: [...s.slots] })),
+		activityLog: DEFAULT_SETTINGS.activityLog.map((e) => ({ ...e })),
 	};
 }
 
@@ -166,6 +183,9 @@ export function mergeSettings(
 			? data.columnLayouts.map((s) => ({ ...s, slots: s.slots ? [...s.slots] : [] }))
 			: deepCloneDefaults().columnLayouts,
 		excludeFolders: _resolveExcludeFolders(data, splitCsv),
+		activityLog: Array.isArray(data.activityLog)
+			? data.activityLog.map((e) => ({ ...e }))
+			: deepCloneDefaults().activityLog,
 		dividerDesign:
 			data.dividerDesign && typeof data.dividerDesign === "object"
 				? { ...deepCloneDefaults().dividerDesign, ...data.dividerDesign }

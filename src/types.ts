@@ -1,7 +1,7 @@
 /**
  * Union of all dashboard block types that can appear in the layout.
  */
-export type DashboardBlock = DividerBlockConfig | SectionConfig | RecentlyConfig | VaultListConfig | VaultActivityConfig | RowConfig | ColumnConfig | LinksConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | HeatmapConfig | TimelineConfig | ClockConfig | FileTypeChartConfig | TaskSummaryConfig;
+export type DashboardBlock = DividerBlockConfig | SectionConfig | VaultActivityConfig | RowConfig | ColumnConfig | LinksConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | HeatmapConfig | TimelineConfig | ClockConfig | FileTypeChartConfig | TaskSummaryConfig;
 
 /**
  * Valid identifiers for named content slots used in row and column layouts.
@@ -14,11 +14,6 @@ export interface DashboardConfig {
 	stats: StatsConfig;
 	/** Ordered list of blocks rendered top-to-bottom on the dashboard. */
 	blocks: DashboardBlock[];
-	/**
-	 * When `true`, the recently-opened section uses default settings.
-	 * When a `RecentlyConfig`, customizes the recently-opened section.
-	 */
-	recently: boolean | RecentlyConfig;
 	graph: GraphConfig;
 	search?: SearchConfig;
 }
@@ -138,7 +133,7 @@ export interface RowConfig {
 	 * Ordered child blocks rendered left-to-right inside this row.
 	 * @remarks Cannot contain nested `RowConfig` — use `ColumnConfig` for nesting.
 	 */
-	children: (SectionConfig | ColumnConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | VaultListConfig | VaultActivityConfig | LinksConfig | HeatmapConfig | TimelineConfig | ClockConfig | FileTypeChartConfig | TaskSummaryConfig)[];
+	children: (SectionConfig | ColumnConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | VaultActivityConfig | LinksConfig | HeatmapConfig | TimelineConfig | ClockConfig | FileTypeChartConfig | TaskSummaryConfig)[];
 }
 
 /**
@@ -154,7 +149,7 @@ export interface ColumnConfig {
 	/**
 	 * Ordered child blocks rendered top-to-bottom inside this column.
 	 */
-	children: (SectionConfig | RowConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | VaultListConfig | VaultActivityConfig | LinksConfig | HeatmapConfig | TimelineConfig | ClockConfig | FileTypeChartConfig | TaskSummaryConfig)[];
+	children: (SectionConfig | RowConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | VaultActivityConfig | LinksConfig | HeatmapConfig | TimelineConfig | ClockConfig | FileTypeChartConfig | TaskSummaryConfig)[];
 }
 
 /** Configuration for the search bar widget. */
@@ -196,38 +191,6 @@ export interface HeadingBlockConfig {
 }
 
 /**
- * Configuration for the recently-opened files section.
- * @remarks Displays a list of vault files opened most recently,
- * optionally filtered by path prefix and/or tags.
- */
-export interface RecentlyConfig {
-	kind: "recently";
-	/** Whether this section is rendered on the dashboard. */
-	show: boolean;
-	/** Maximum number of recently-opened items to display. */
-	count?: number;
-	/** Vault-relative path prefix to filter results (e.g. "Notes"). */
-	path?: string;
-	/** Only include files that contain at least one of these tags. */
-	tags?: string[];
-}
-
-/**
- * Configuration for the vault file-list section.
- * @remarks Similar to `RecentlyConfig` but shows a curated or
- * filtered list of vault files with optional divider styling.
- */
-export interface VaultListConfig {
-	kind: "vaultlist";
-	show: boolean;
-	count?: number;
-	path?: string;
-	tags?: string[];
-	/** When `true`, renders a divider below this list. */
-	showDivider?: boolean;
-}
-
-/**
  * Configuration for the vault-activity section.
  * @remarks Displays recent file activity (creates, edits, renames)
  * across the vault, filtered by path and/or tags.
@@ -254,6 +217,31 @@ export interface HeatmapConfig {
 	label?: string;
 }
 
+/** A single entry in the persisted vault activity log. */
+export interface ActivityEvent {
+	/** Unix timestamp (ms) when the event occurred. */
+	time: number;
+	/** Type of activity. */
+	action:
+		| "created"
+		| "modified"
+		| "deleted"
+		| "moved"
+		| "renamed"
+		| "opened"
+		| "task"
+		| "property"
+		| "folder-created"
+		| "folder-deleted"
+		| "folder-renamed";
+	/** Vault-relative path of the affected file or folder. */
+	path: string;
+	/** Previous path (for `moved` / `renamed` / `folder-renamed` events). */
+	oldPath?: string;
+	/** Extra context: task text, changed property keys, or event tag. */
+	detail?: string;
+}
+
 /** Configuration for the activity timeline section. */
 export interface TimelineConfig {
 	kind: "timeline";
@@ -262,8 +250,26 @@ export interface TimelineConfig {
 	count?: number;
 	/** Custom heading label displayed above the timeline. */
 	label?: string;
-	/** File extensions to exclude from timeline entries (e.g. `[".png", ".jpg"]`). */
+	/** Vault-relative folder paths to exclude from timeline entries. */
 	exclude?: string[];
+	/** Only show markdown files. */
+	onlyMarkdown?: boolean;
+	/** Vault-relative folder paths to include (empty means all folders). */
+	include?: string[];
+	/** File extensions to exclude (e.g. `[".png", ".jpg"]`). */
+	excludeExt?: string[];
+	/** Whitelist of actions to display (e.g. `["created", "deleted"]`). */
+	types?: string[];
+	/** Group entries by `"day"` or by `"file"`. */
+	group?: "day" | "file";
+	/** Show relative times instead of clock times. */
+	relative?: boolean;
+	/** Show day separators ("Today", "Yesterday", date). */
+	showDate?: boolean;
+	/** Show interactive action filter chips. */
+	showChips?: boolean;
+	/** Show a "load more" button when entries exceed the count. */
+	showMore?: boolean;
 }
 
 /** Configuration for the live clock widget. */
@@ -334,6 +340,29 @@ export interface QuickLinkEntry {
 	icon: string;
 }
 
+/**
+ * Structure of an item stored in Obsidian's built-in Bookmarks plugin.
+ * This type mirrors the internal plugin data (not exported by the Obsidian API).
+ */
+export interface ObsidianBookmarkItem {
+	/** Bookmark type: file, folder, search, group, url, or graph. */
+	type: string;
+	/** Display title for the bookmark. */
+	title: string;
+	/** Vault-relative path (for file/folder types). */
+	path?: string;
+	/** Subpath within a file (for heading/block types). */
+	subpath?: string;
+	/** Search query (for search type). */
+	query?: string;
+	/** External URL (for url type). */
+	url?: string;
+	/** Nested items (for group type). */
+	items?: ObsidianBookmarkItem[];
+	/** Creation time. */
+	ctime?: number;
+}
+
 /** A vault-list entry representing a filterable collection of vault notes. */
 export interface VaultListEntry {
 	/** Display name for this vault list section. */
@@ -344,8 +373,8 @@ export interface VaultListEntry {
 	tags: string;
 	/** Maximum number of notes to show in this list. */
 	count: number;
-	/** Whether to render a divider below this list section. */
-	showDivider: boolean;
+	/** Divider label shown above this list. Empty to hide the divider. */
+	label: string;
 }
 
 /**
@@ -484,6 +513,8 @@ export interface NexusSettings {
 	mocDividerLabel: string;
 	/** Whether the quick-links grid is visible. */
 	showQuickLinks: boolean;
+	/** Whether to show Obsidian built-in Bookmarks as a separate links section. */
+	showBookmarksAsLinks: boolean;
 	/** Whether the heatmap calendar is visible. */
 	showHeatmap: boolean;
 	/** Number of weeks to display in the heatmap. */
@@ -532,10 +563,40 @@ export interface NexusSettings {
 	showVaultActivity: boolean;
 	/** Maximum number of entries in the vault-activity list. */
 	vaultActivityCount: number;
-	/** Vault-relative path prefix to scope vault-activity tracking. */
-	vaultActivityPath: string;
-	/** Comma-separated tags used to filter vault-activity entries. */
-	vaultActivityTags: string;
 	/** Custom heading label for the vault-activity section. */
 	vaultActivityLabel: string;
+	/** Whether the vault-activity list shows the bottom fade mask. */
+	vaultActivityShowFade: boolean;
+	/** Maximum height of the vault-activity list before scrolling (px). */
+	vaultActivityMaxHeight: number;
+	/** Whether the activity timeline shows the bottom fade mask. */
+	activityTimelineShowFade: boolean;
+	/** Maximum height of the activity timeline before scrolling (px). */
+	activityTimelineMaxHeight: number;
+	/** Persisted vault activity events (newest first). */
+	activityLog: ActivityEvent[];
+	/** Maximum number of activity events to persist. */
+	activityLogMax: number;
+	/** Whether global vault activity tracking is enabled. */
+	activityTrackingEnabled: boolean;
+	/** Whether task (checkbox) changes are tracked while editing. */
+	activityTaskTracking: boolean;
+	/** Only show markdown files in the activity timeline. */
+	activityTimelineOnlyMarkdown: boolean;
+	/** Comma-separated vault-relative folders to include in the timeline. */
+	activityTimelineIncludeFolders: string;
+	/** Show relative times in the activity timeline. */
+	activityTimelineShowRelative: boolean;
+	/** Group activity timeline entries by day or by file. */
+	activityTimelineGroup: "day" | "file";
+	/** Show day separators in the activity timeline. */
+	activityTimelineShowDate: boolean;
+	/** Show interactive action filter chips in the activity timeline. */
+	activityTimelineShowChips: boolean;
+	/** Show a "load more" button when entries exceed the count. */
+	activityTimelineShowMore: boolean;
+	/** Whether the task summary list shows the bottom fade mask. */
+	taskSummaryShowFade: boolean;
+	/** Maximum height of the task summary list before scrolling (px). */
+	taskSummaryMaxHeight: number;
 }

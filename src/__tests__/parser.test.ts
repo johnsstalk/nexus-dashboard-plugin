@@ -11,7 +11,6 @@ describe("buildDefaultConfig", () => {
 		expect(config.blocks).toHaveLength(2);
 		expect(config.blocks[0].kind).toBe("row");
 		expect(config.blocks[1].kind).toBe("row");
-		expect(config.recently).toBe(false);
 		expect(config.graph).toBeDefined();
 	});
 });
@@ -110,20 +109,46 @@ graph:
 		expect(config.graph.exclude).toEqual(["folder1", "folder2"]);
 	});
 
-	it("parses recently config as block", () => {
+	it("parses vault-activity block with path, tags and label", () => {
 		const config = parseDashboard(`
-recently:
+vault-activity:
   show: true
   count: 5
+  path: Journal/
+  tags: project, active
+  label: MY ACTIVITY
 `);
 		expect(config.blocks).toHaveLength(1);
-		const recently = config.blocks[0];
-		expect(recently.kind).toBe("recently");
+		const activity = config.blocks[0];
+		expect(activity.kind).toBe("vault-activity");
+		if (activity.kind === "vault-activity") {
+			expect(activity.show).toBe(true);
+			expect(activity.count).toBe(5);
+			expect(activity.path).toBe("Journal/");
+			expect(activity.tags).toEqual(["project", "active"]);
+			expect(activity.label).toBe("MY ACTIVITY");
+		}
 	});
 
-	it("parses recently as root-level boolean", () => {
-		const config = parseDashboard(`recently: true`);
-		expect(config.recently).toBe(true);
+	it("parses multiple vault-activity blocks independently", () => {
+		const config = parseDashboard(`
+vault-activity:
+  path: Journal/
+  count: 10
+
+vault-activity:
+  tags: work
+  count: 3
+`);
+		const activityBlocks = config.blocks.filter((b) => b.kind === "vault-activity");
+		expect(activityBlocks).toHaveLength(2);
+		const [first, second] = activityBlocks;
+		if (first.kind === "vault-activity" && second.kind === "vault-activity") {
+			expect(first.path).toBe("Journal/");
+			expect(first.tags).toBeUndefined();
+			expect(second.path).toBeUndefined();
+			expect(second.tags).toEqual(["work"]);
+		}
 	});
 
 	it("parses row with sections", () => {
@@ -183,5 +208,42 @@ search:
         path: Test.md
 `);
 		expect(config.blocks).toHaveLength(1);
+	});
+
+	it("parses timeline block with extended keys", () => {
+		const config = parseDashboard(`
+timeline:
+  show: true
+  count: 10
+  label: RECENT
+  exclude: Journal
+  excludeExt: .png, .jpg
+  include: Projects, Journal
+  types: created, deleted
+  onlyMarkdown: false
+  group: file
+  relative: true
+  showDate: false
+  showChips: true
+  showMore: false
+`);
+		expect(config.blocks).toHaveLength(1);
+		const timeline = config.blocks[0];
+		expect(timeline.kind).toBe("timeline");
+		if (timeline.kind === "timeline") {
+			expect(timeline.show).toBe(true);
+			expect(timeline.count).toBe(10);
+			expect(timeline.label).toBe("RECENT");
+			expect(timeline.exclude).toEqual(["Journal"]);
+			expect(timeline.excludeExt).toEqual([".png", ".jpg"]);
+			expect(timeline.include).toEqual(["Projects", "Journal"]);
+			expect(timeline.types).toEqual(["created", "deleted"]);
+			expect(timeline.onlyMarkdown).toBe(false);
+			expect(timeline.group).toBe("file");
+			expect(timeline.relative).toBe(true);
+			expect(timeline.showDate).toBe(false);
+			expect(timeline.showChips).toBe(true);
+			expect(timeline.showMore).toBe(false);
+		}
 	});
 });

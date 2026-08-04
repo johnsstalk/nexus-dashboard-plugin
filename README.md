@@ -120,12 +120,29 @@ divider:
 ```
 ````
 
-### Recently modified
-Shows the N most recently modified notes.
+### Vault Activity
+A compact terminal-style list of files, optionally filtered by path and/or tags. With no filter it shows the most recently modified notes from the whole vault.
+
+Properties: `path`, `tags` (comma-separated), `count`, `label`, `show`
+
+An empty `label` hides the divider header above the list. Slots without a list selected fall back to recently modified files from the whole vault, using the global **Label** and **Count** settings. In Settings → Components → Vault Activity, each named preset carries its own `path`, `tags`, `count`, and `label`; a preset with empty `path` and `tags` acts as a whole-vault list.
+
+Multiple `vault-activity:` blocks with different filters each render their own list in their row/column.
 
 ````
 ```nexus-dashboard
-recently: true
+vault-activity:
+  label: Journal
+  path: Journal/
+  count: 10
+
+vault-activity:
+  label: Active Projects
+  tags: project, active
+  count: 5
+
+vault-activity:
+  count: 8
 ```
 ````
 

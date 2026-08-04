@@ -2,7 +2,6 @@ import { App, PluginSettingTab, Setting, Notice, setIcon, Modal } from "obsidian
 import type NexusDashboardPlugin from "./main";
 import type {
 	MocEntry,
-	QuickLinkEntry,
 	RowLayoutEntry,
 	ColumnLayoutEntry,
 	StatEntry,
@@ -118,6 +117,7 @@ export class NexusSettingTab extends PluginSettingTab {
 	private collapsedCards = new Map<number, boolean>();
 	private collapsedRowCards = new Map<number, boolean>();
 	private collapsedColCards = new Map<number, boolean>();
+	private selectedQuickLink = 0;
 
 	constructor(app: App, plugin: NexusDashboardPlugin) {
 		super(app, plugin);
@@ -1198,12 +1198,77 @@ export class NexusSettingTab extends PluginSettingTab {
 				});
 			});
 
-		// ── Vault Activity Lists ─────────────────────────
-		new Setting(containerEl).setHeading().setName("Vault Activity Lists");
+		// ── Vault Activity ──────────────────────────────
+		new Setting(containerEl).setHeading().setName("Vault Activity");
 		containerEl.createEl("p", {
-			text: "Configure named vault activity presets for use in layout slots. Each list filters vault notes by path and/or tags, and renders in terminal log style.",
+			text: "Show a terminal-style list of files. Pick a preset per slot; a slot with no list selected shows recently modified files from the whole vault. Leave a list's label empty to hide its header.",
 			cls: "setting-item-description",
 		});
+
+		new Setting(containerEl)
+			.setName("Show vault activity")
+			.setDesc("Show vault activity slots on the dashboard. When off, vault activity slots render nothing.")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.showVaultActivity)
+					.onChange(async (value) => {
+						this.plugin.settings.showVaultActivity = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Label")
+			.setDesc("Divider label for slots with no list selected. Leave empty to hide the header.")
+			.addText((text) =>
+				text
+					.setPlaceholder("VAULT ACTIVITY")
+					.setValue(this.plugin.settings.vaultActivityLabel)
+					.onChange(async (value) => {
+						this.plugin.settings.vaultActivityLabel = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Count")
+			.setDesc("Number of files shown in slots with no list selected")
+			.addSlider((slider) =>
+				slider
+					.setLimits(3, 50, 1)
+					.setValue(this.plugin.settings.vaultActivityCount)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						this.plugin.settings.vaultActivityCount = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Show fade mask")
+			.setDesc("Fade the bottom of the list to hint at more content")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.vaultActivityShowFade)
+					.onChange(async (value) => {
+						this.plugin.settings.vaultActivityShowFade = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Maximum list height")
+			.setDesc("Max height of the list before scrolling (120–800px)")
+			.addSlider((slider) =>
+				slider
+					.setLimits(120, 800, 10)
+					.setValue(this.plugin.settings.vaultActivityMaxHeight)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						this.plugin.settings.vaultActivityMaxHeight = value;
+						await this.plugin.saveSettings();
+					})
+			);
 
 		this.plugin.settings.vaultLists.forEach((vl, i) => {
 			this.renderVaultListEntry(containerEl, vl, i);
@@ -1222,7 +1287,7 @@ export class NexusSettingTab extends PluginSettingTab {
 							path: "",
 							tags: "",
 							count: this.plugin.settings.vaultActivityCount,
-							showDivider: true,
+							label: "",
 						});
 						await this.saveAndRefresh();
 					})
@@ -1302,23 +1367,17 @@ export class NexusSettingTab extends PluginSettingTab {
 					})
 			);
 
-		this.plugin.settings.quickLinks.forEach((link, i) => {
-			this.renderQuickLink(containerEl, link, i);
-		});
+		this.renderQuickLinksEditor(containerEl);
 
+		this.plugin.settings.showBookmarksAsLinks ??= false;
 		new Setting(containerEl)
-			.setName("Add link")
-			.setDesc("Add a new quick link to the dashboard.")
-			.addButton((btn) =>
-				btn
-					.setButtonText("+ Add Link")
-					.setCta()
-					.onClick(async () => {
-						this.plugin.settings.quickLinks.push({
-							label: "New Link",
-							url: "https://example.com",
-							icon: "Link",
-						});
+			.setName("Show Obsidian bookmarks")
+			.setDesc("Display items from the built-in Bookmarks plugin as quick links on the dashboard.")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.showBookmarksAsLinks)
+					.onChange(async (value) => {
+						this.plugin.settings.showBookmarksAsLinks = value;
 						await this.saveAndRefresh();
 					})
 			);
@@ -1369,6 +1428,37 @@ export class NexusSettingTab extends PluginSettingTab {
 					})
 			);
 
+		// ── Activity Tracking ──────────────────────────
+		new Setting(containerEl).setHeading().setName("Activity Tracking");
+		containerEl.createEl("p", {
+			text: "Global vault activity is recorded in the background and shown in the timeline, even when no dashboard is open.",
+			cls: "setting-item-description",
+		});
+
+		new Setting(containerEl)
+			.setName("Enable activity tracking")
+			.setDesc("Record vault file/folder events and persist them to data.json")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.activityTrackingEnabled)
+					.onChange(async (value) => {
+						this.plugin.settings.activityTrackingEnabled = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Track task checkboxes")
+			.setDesc("Record when a task checkbox is toggled")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.activityTaskTracking)
+					.onChange(async (value) => {
+						this.plugin.settings.activityTaskTracking = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
 		// ── Activity Timeline ──────────────────────────
 		new Setting(containerEl).setHeading().setName("Activity Timeline");
 		containerEl.createEl("p", {
@@ -1403,6 +1493,32 @@ export class NexusSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
+			.setName("Show fade mask")
+			.setDesc("Fade the bottom of the list to hint at more content")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.activityTimelineShowFade)
+					.onChange(async (value) => {
+						this.plugin.settings.activityTimelineShowFade = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Maximum list height")
+			.setDesc("Max height of the list before scrolling (120–800px)")
+			.addSlider((slider) =>
+				slider
+					.setLimits(120, 800, 10)
+					.setValue(this.plugin.settings.activityTimelineMaxHeight)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						this.plugin.settings.activityTimelineMaxHeight = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
 			.setName("Label")
 			.setDesc("Text shown in the divider above the timeline")
 			.addText((text) =>
@@ -1413,6 +1529,115 @@ export class NexusSettingTab extends PluginSettingTab {
 						this.plugin.settings.activityTimelineLabel = value;
 						await this.plugin.saveSettings();
 					})
+			);
+
+		new Setting(containerEl)
+			.setName("Only markdown")
+			.setDesc("Only show activity for markdown files")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.activityTimelineOnlyMarkdown)
+					.onChange(async (value) => {
+						this.plugin.settings.activityTimelineOnlyMarkdown = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Include folders")
+			.setDesc("Restrict to these folder paths (comma-separated). Empty shows everything.")
+			.addText((text) =>
+				text
+					.setPlaceholder("Journal, Projects")
+					.setValue(this.plugin.settings.activityTimelineIncludeFolders)
+					.onChange(async (value) => {
+						this.plugin.settings.activityTimelineIncludeFolders = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Group by")
+			.setDesc("Group timeline entries by day or by file")
+			.addDropdown((dropdown) => {
+				dropdown.addOption("day", "Day");
+				dropdown.addOption("file", "File");
+				dropdown.setValue(this.plugin.settings.activityTimelineGroup);
+				dropdown.onChange(async (value) => {
+					this.plugin.settings.activityTimelineGroup = value as "day" | "file";
+					await this.plugin.saveSettings();
+				});
+			});
+
+		new Setting(containerEl)
+			.setName("Relative times")
+			.setDesc("Show \"3m ago\" instead of clock times")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.activityTimelineShowRelative)
+					.onChange(async (value) => {
+						this.plugin.settings.activityTimelineShowRelative = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Show date separators")
+			.setDesc("Show \"Today\" / \"Yesterday\" / date headings")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.activityTimelineShowDate)
+					.onChange(async (value) => {
+						this.plugin.settings.activityTimelineShowDate = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Show filter chips")
+			.setDesc("Show interactive action filter chips above the list")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.activityTimelineShowChips)
+					.onChange(async (value) => {
+						this.plugin.settings.activityTimelineShowChips = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Show \"load more\" button")
+			.setDesc("Show a button to load more entries beyond the count")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.activityTimelineShowMore)
+					.onChange(async (value) => {
+						this.plugin.settings.activityTimelineShowMore = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Log size")
+			.setDesc("Maximum number of events kept in the activity log (50–5000)")
+			.addSlider((slider) =>
+				slider
+					.setLimits(50, 5000, 50)
+					.setValue(this.plugin.settings.activityLogMax)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						this.plugin.settings.activityLogMax = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Clear activity log")
+			.setDesc("Remove all recorded activity events")
+			.addButton((button) =>
+				button.setButtonText("Clear").setWarning().onClick(() => {
+					this.plugin.clearActivityLog();
+				})
 			);
 
 		// ── Clock ──────────────────────────────────────
@@ -1622,6 +1847,32 @@ export class NexusSettingTab extends PluginSettingTab {
 					.setDynamicTooltip()
 					.onChange(async (value) => {
 						this.plugin.settings.taskSummaryCount = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Show fade mask")
+			.setDesc("Fade the bottom of the list to hint at more content")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.taskSummaryShowFade)
+					.onChange(async (value) => {
+						this.plugin.settings.taskSummaryShowFade = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Maximum list height")
+			.setDesc("Max height of the list before scrolling (120–800px)")
+			.addSlider((slider) =>
+				slider
+					.setLimits(120, 800, 10)
+					.setValue(this.plugin.settings.taskSummaryMaxHeight)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						this.plugin.settings.taskSummaryMaxHeight = value;
 						await this.plugin.saveSettings();
 					})
 			);
@@ -1978,91 +2229,181 @@ export class NexusSettingTab extends PluginSettingTab {
 		lineRight.style.height = d.lineWidth;
 	}
 
-	// ── Quick Link ─────────────────────────────────────────
+	// ── Quick Links ─────────────────────────────────────────
 
-	renderQuickLink(containerEl: HTMLElement, link: QuickLinkEntry, index: number): void {
-		const setting = new Setting(containerEl);
+	/**
+	 * Compact dropdown-based quick links editor. One dropdown picks which link
+	 * to edit; the selected link's fields render inline below it. This keeps
+	 * the Components tab tight regardless of how many links exist.
+	 */
+	private renderQuickLinksEditor(containerEl: HTMLElement): void {
+		const links = this.plugin.settings.quickLinks;
 
-		setting.setName(link.label || "Untitled");
-		setting.addText((text) =>
-			text
-				.setPlaceholder("Label")
-				.setValue(link.label)
-				.onChange(async (value) => {
-					this.plugin.settings.quickLinks[index].label = value;
-					await this.plugin.saveSettings();
-				})
-		);
-		setting.addText((text) =>
-			text
-				.setPlaceholder("URL")
-				.setValue(link.url)
-				.onChange(async (value) => {
-					this.plugin.settings.quickLinks[index].url = value;
-					await this.plugin.saveSettings();
-				})
-		);
-		setting.addExtraButton((btn) =>
+		if (links.length === 0) {
+			const emptyRow = new Setting(containerEl);
+			emptyRow.setName("Quick links");
+			emptyRow.setDesc("No quick links yet.");
+			emptyRow.addButton((btn) =>
+				btn
+					.setButtonText("+ Add Link")
+					.setCta()
+					.onClick(async () => {
+						this.addQuickLink();
+					})
+			);
+			return;
+		}
+
+		if (this.selectedQuickLink >= links.length) {
+			this.selectedQuickLink = 0;
+		}
+
+		const picker = new Setting(containerEl);
+		picker.setName("Quick link");
+		picker.setDesc("Select a link to edit its label and URL.");
+		picker.addDropdown((dropdown) => {
+			for (let i = 0; i < links.length; i++) {
+				dropdown.addOption(String(i), links[i].label || `Link ${i + 1}`);
+			}
+			dropdown.setValue(String(this.selectedQuickLink));
+			dropdown.onChange((value) => {
+				this.selectedQuickLink = safeParseInt(value, 0, 0) ?? 0;
+				this.display();
+			});
+		});
+		picker.addButton((btn) =>
 			btn
+				.setButtonText("+ Add")
+				.setCta()
+				.setIcon("plus")
+				.onClick(async () => {
+					this.addQuickLink();
+				})
+		);
+
+		const index = this.selectedQuickLink;
+		const link = links[index];
+		const editor = containerEl.createDiv({ cls: "nexus-quicklinks-editor" });
+
+		new Setting(editor)
+			.setName("Label")
+			.addText((text) =>
+				text
+					.setPlaceholder("Google")
+					.setValue(link.label)
+					.onChange(async (value) => {
+						this.plugin.settings.quickLinks[index].label = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(editor)
+			.setName("URL")
+			.addText((text) =>
+				text
+					.setPlaceholder("https://example.com")
+					.setValue(link.url)
+					.onChange(async (value) => {
+						this.plugin.settings.quickLinks[index].url = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		const actions = new Setting(editor);
+		actions.setName("Actions");
+		actions.addButton((btn) =>
+			btn
+				.setButtonText("Move up")
+				.setIcon("arrow-up")
+				.setDisabled(index === 0)
+				.onClick(async () => {
+					[links[index - 1], links[index]] = [links[index], links[index - 1]];
+					this.selectedQuickLink = index - 1;
+					await this.saveAndRefresh();
+				})
+		);
+		actions.addButton((btn) =>
+			btn
+				.setButtonText("Move down")
+				.setIcon("arrow-down")
+				.setDisabled(index === links.length - 1)
+				.onClick(async () => {
+					[links[index], links[index + 1]] = [links[index + 1], links[index]];
+					this.selectedQuickLink = index + 1;
+					await this.saveAndRefresh();
+				})
+		);
+		actions.addButton((btn) =>
+			btn
+				.setButtonText("Delete")
+				.setWarning()
 				.setIcon("trash")
-				.setTooltip("Remove")
 				.onClick(async () => {
 					this.plugin.settings.quickLinks.splice(index, 1);
+					this.selectedQuickLink = Math.max(0, this.plugin.settings.quickLinks.length - 1);
 					await this.saveAndRefresh();
 				})
 		);
 	}
 
+	private async addQuickLink(): Promise<void> {
+		this.plugin.settings.quickLinks.push({
+			label: "New Link",
+			url: "https://example.com",
+			icon: "Link",
+		});
+		this.selectedQuickLink = this.plugin.settings.quickLinks.length - 1;
+		await this.saveAndRefresh();
+	}
+
 	// ── Vault List Entry ────────────────────────────────────
 
 	renderVaultListEntry(containerEl: HTMLElement, vl: VaultListEntry, index: number): void {
-		const setting = new Setting(containerEl);
+		const entry = containerEl.createDiv({ cls: "nexus-vault-list-entry" });
 
-		setting.setName(vl.name || "Untitled");
-		setting.addText((text) =>
-			text
-				.setPlaceholder("Path")
-				.setValue(vl.path)
-				.onChange(async (value) => {
-					this.plugin.settings.vaultLists[index].path = value;
-					await this.plugin.saveSettings();
-				})
-		);
-		setting.addText((text) =>
-			text
-				.setPlaceholder("Tags")
-				.setValue(vl.tags)
-				.onChange(async (value) => {
-					this.plugin.settings.vaultLists[index].tags = value;
-					await this.plugin.saveSettings();
-				})
-		);
-		setting.addText((text) =>
-			text
-				.setPlaceholder("Count")
-				.setValue(String(vl.count))
-				.onChange(async (value) => {
-					this.plugin.settings.vaultLists[index].count = safeParseInt(value, 9, 1) ?? 9;
-					await this.plugin.saveSettings();
-				})
-		);
-		setting.addToggle((toggle) =>
-			toggle
-				.setTooltip("Show divider")
-				.setValue(vl.showDivider)
-				.onChange(async (value) => {
-					this.plugin.settings.vaultLists[index].showDivider = value;
-					await this.plugin.saveSettings();
-				})
-		);
-		setting.addExtraButton((btn) =>
-			btn
-				.setIcon("trash")
-				.setTooltip("Remove")
-				.onClick(async () => {
-					this.plugin.settings.vaultLists.splice(index, 1);
-					await this.saveAndRefresh();
-				})
-		);
+		const head = entry.createDiv({ cls: "nexus-vault-list-entry-head" });
+		head.createSpan({ cls: "nexus-vault-list-entry-name", text: vl.name || "Untitled" });
+		const removeBtn = head.createEl("button", {
+			cls: "nexus-settings-moc-btn--delete",
+			attr: { "aria-label": "Remove" },
+		});
+		setIcon(removeBtn, "trash");
+		removeBtn.addEventListener("click", async () => {
+			this.plugin.settings.vaultLists.splice(index, 1);
+			await this.saveAndRefresh();
+		});
+
+		const grid = entry.createDiv({ cls: "nexus-vault-list-entry-grid" });
+
+		this.addVaultListField(grid, "Path", vl.path, (value) => {
+			this.plugin.settings.vaultLists[index].path = value;
+		});
+		this.addVaultListField(grid, "Tags", vl.tags, (value) => {
+			this.plugin.settings.vaultLists[index].tags = value;
+		});
+		this.addVaultListField(grid, "Count", String(vl.count), (value) => {
+			this.plugin.settings.vaultLists[index].count = safeParseInt(value, 9, 1) ?? 9;
+		});
+		this.addVaultListField(grid, "Label", vl.label, (value) => {
+			this.plugin.settings.vaultLists[index].label = value;
+		});
+	}
+
+	private addVaultListField(
+		parent: HTMLElement,
+		label: string,
+		value: string,
+		onValue: (value: string) => void
+	): void {
+		const field = parent.createDiv({ cls: "nexus-vault-list-entry-field" });
+		field.createEl("label", { cls: "nexus-vault-list-entry-field-label", text: label });
+		const input = field.createEl("input", {
+			cls: "nexus-vault-list-entry-input",
+			attr: { type: "text", value },
+		});
+		input.addEventListener("input", async () => {
+			onValue(input.value);
+			await this.plugin.saveSettings();
+		});
 	}
 }

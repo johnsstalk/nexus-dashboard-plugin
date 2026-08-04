@@ -187,7 +187,39 @@ describe("mergeSettings", () => {
 	it("preserves vault activity fields", () => {
 		const result = mergeSettings({ vaultActivityLabel: "CUSTOM LABEL" }, splitCsv);
 		expect(result.vaultActivityLabel).toBe("CUSTOM LABEL");
-		expect(result.vaultActivityCount).toBe(9);
+		expect(result.vaultActivityCount).toBe(15);
+		expect(result.vaultActivityShowFade).toBe(true);
+		expect(result.vaultActivityMaxHeight).toBe(320);
+		expect(result.activityTimelineShowFade).toBe(true);
+		expect(result.activityTimelineMaxHeight).toBe(320);
+		expect(result.taskSummaryShowFade).toBe(true);
+		expect(result.taskSummaryMaxHeight).toBe(320);
+	});
+
+	it("provides activity tracking and timeline defaults", () => {
+		const result = mergeSettings(null, splitCsv);
+		expect(result.activityTrackingEnabled).toBe(true);
+		expect(result.activityTaskTracking).toBe(true);
+		expect(result.activityLogMax).toBe(500);
+		expect(result.activityLog).toEqual([]);
+		expect(result.activityTimelineOnlyMarkdown).toBe(true);
+		expect(result.activityTimelineIncludeFolders).toBe("");
+		expect(result.activityTimelineShowRelative).toBe(false);
+		expect(result.activityTimelineGroup).toBe("day");
+		expect(result.activityTimelineShowDate).toBe(true);
+		expect(result.activityTimelineShowChips).toBe(false);
+		expect(result.activityTimelineShowMore).toBe(true);
+	});
+
+	it("clones the activity log when merging", () => {
+		const result = mergeSettings(
+			{ activityLog: [{ time: 1, action: "created", path: "A.md" }] },
+			splitCsv,
+		);
+		expect(result.activityLog).toHaveLength(1);
+		expect(result.activityLog[0].path).toBe("A.md");
+		result.activityLog.pop();
+		expect(result.activityLog).toHaveLength(0);
 	});
 
 	it("mutating result does not affect defaults", () => {

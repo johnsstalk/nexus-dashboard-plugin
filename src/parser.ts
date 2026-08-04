@@ -7,8 +7,6 @@ import {
 	LinkItem,
 	RowConfig,
 	ColumnConfig,
-	RecentlyConfig,
-	VaultListConfig,
 	VaultActivityConfig,
 	SearchConfig,
 	StatsBlockConfig,
@@ -57,8 +55,6 @@ type ParseContext =
 	| "row"
 	| "column"
 	| "search"
-	| "recently"
-	| "vaultlist"
 	| "vault-activity"
 	| "section-divider"
 	| "heatmap"
@@ -77,7 +73,6 @@ export function parseDashboard(raw: string): DashboardConfig {
 		header: { text: "", font: "", color: "", size: 1, enabled: false },
 		stats: { enabled: false, items: [] },
 		blocks: [],
-		recently: false,
 		graph: { enabled: false, exclude: [] },
 	};
 
@@ -94,8 +89,6 @@ export function parseDashboard(raw: string): DashboardConfig {
 	let columnInsideRow = false;
 	let columnIndent = -1;
 	let currentSearch: SearchConfig | null = null;
-	let currentRecently: RecentlyConfig | null = null;
-	let currentVaultList: VaultListConfig | null = null;
 	let currentVaultActivity: VaultActivityConfig | null = null;
 	let currentHeatmap: HeatmapConfig | null = null;
 	let currentTimeline: TimelineConfig | null = null;
@@ -113,7 +106,7 @@ export function parseDashboard(raw: string): DashboardConfig {
 		if (t.startsWith("- ")) {
 			const stripped = t.slice(2);
 			if (
-				/^(header|stats|graph|divider|section|links|row|column|search|recently|vaultlist|vault-activity|filetypes|heatmap|timeline|clock|tasks):/.test(
+				/^(header|stats|graph|divider|section|links|row|column|search|vault-activity|filetypes|heatmap|timeline|clock|tasks):/.test(
 					stripped,
 				)
 			) {
@@ -289,20 +282,6 @@ export function parseDashboard(raw: string): DashboardConfig {
 			currentVaultActivity = { kind: "vault-activity", show: true };
 			continue;
 		}
-		if (t === "recently:" && !isRootRecentlyContext(lines, i)) {
-			flushCurrent();
-			flushColumn();
-			context = "recently";
-			currentRecently = { kind: "recently", show: true };
-			continue;
-		}
-		if (t === "vaultlist:") {
-			flushCurrent();
-			flushColumn();
-			context = "vaultlist";
-			currentVaultList = { kind: "vaultlist", show: true };
-			continue;
-		}
 		if (t === "heatmap:") {
 			flushCurrent();
 			flushColumn();
@@ -359,15 +338,6 @@ export function parseDashboard(raw: string): DashboardConfig {
 		if (!kv) continue;
 
 		// Root-level keys recognized in ANY context
-		if (kv.key === "recently") {
-			if (kv.value === "true") {
-				config.recently = true;
-			} else if (kv.value === "false" || kv.value === "") {
-				config.recently = false;
-			}
-			continue;
-		}
-
 		switch (context) {
 			case "header":
 				if (!config.header.enabled) {
@@ -445,12 +415,6 @@ export function parseDashboard(raw: string): DashboardConfig {
 			case "search":
 				if (currentSearch) applySearchKV(currentSearch, kv);
 				break;
-		case "recently":
-			if (currentRecently) applyListConfigKV(currentRecently, kv);
-			break;
-		case "vaultlist":
-			if (currentVaultList) applyListConfigKV(currentVaultList, kv);
-				break;
 			case "heatmap":
 				if (currentHeatmap) applyHeatmapKV(currentHeatmap, kv);
 				break;
@@ -492,8 +456,6 @@ export function parseDashboard(raw: string): DashboardConfig {
 		flushSection();
 		flushDivider();
 		flushSearch();
-		flushRecently();
-		flushVaultList();
 		flushVaultActivity();
 		flushHeatmap();
 		flushTimeline();
@@ -612,20 +574,6 @@ export function parseDashboard(raw: string): DashboardConfig {
 		}
 	}
 
-	function flushRecently() {
-		if (currentRecently) {
-			config.blocks.push(currentRecently);
-			currentRecently = null;
-		}
-	}
-
-	function flushVaultList() {
-		if (currentVaultList) {
-			config.blocks.push(currentVaultList);
-			currentVaultList = null;
-		}
-	}
-
 	function flushVaultActivity() {
 		if (currentVaultActivity) {
 			config.blocks.push(currentVaultActivity);
@@ -716,7 +664,7 @@ function applySearchKV(search: SearchConfig, kv: { key: string; value: string })
 	if (kv.key === "placeholder") search.placeholder = kv.value;
 }
 
-// applyListConfigKV (from utils) handles: applyRecentlyKV, applyVaultListKV, applyVaultActivityKV
+// applyListConfigKV (from utils) handles vault-activity show/count/path/tags
 
 function applyHeatmapKV(heatmap: HeatmapConfig, kv: { key: string; value: string }) {
 	if (kv.key === "show") heatmap.show = kv.value === "true";
@@ -737,6 +685,23 @@ function applyTimelineKV(timeline: TimelineConfig, kv: { key: string; value: str
 	if (kv.key === "exclude") {
 		timeline.exclude = splitCsv(kv.value);
 	}
+	if (kv.key === "excludeExt") {
+		timeline.excludeExt = splitCsv(kv.value);
+	}
+	if (kv.key === "include") {
+		timeline.include = splitCsv(kv.value);
+	}
+	if (kv.key === "types") {
+		timeline.types = splitCsv(kv.value);
+	}
+	if (kv.key === "onlyMarkdown") timeline.onlyMarkdown = kv.value === "true";
+	if (kv.key === "group") {
+		timeline.group = kv.value === "file" ? "file" : "day";
+	}
+	if (kv.key === "relative") timeline.relative = kv.value === "true";
+	if (kv.key === "showDate") timeline.showDate = kv.value === "true";
+	if (kv.key === "showChips") timeline.showChips = kv.value === "true";
+	if (kv.key === "showMore") timeline.showMore = kv.value === "true";
 }
 
 function applyClockKV(clock: ClockConfig, kv: { key: string; value: string }) {
@@ -770,25 +735,6 @@ function applyTaskSummaryKV(ts: TaskSummaryConfig, kv: { key: string; value: str
 	if (kv.key === "label") ts.label = kv.value;
 }
 
-// ── Recently context detection ───────────────────────────
-
-/** Determine if `recently:` at this line is the root-level boolean form */
-function isRootRecentlyContext(allLines: string[], currentIdx: number): boolean {
-	for (let j = currentIdx + 1; j < allLines.length; j++) {
-		const raw = allLines[j].replace(/\r$/, "");
-		const t = raw.trim();
-		if (t === "" || t.startsWith("#")) continue;
-		const nextIndent = raw.search(/\S/);
-		const currentRaw = allLines[currentIdx].replace(/\r$/, "");
-		const currentIndent = currentRaw.search(/\S/);
-		if (nextIndent > currentIndent && /^(show|count|path|tags):/.test(t)) {
-			return false;
-		}
-		return true;
-	}
-	return true;
-}
-
 // ── Utility ──────────────────────────────────────────────
 
 function splitKV(line: string): { key: string; value: string } | null {
@@ -814,7 +760,6 @@ export function buildDefaultConfig(): DashboardConfig {
 		header: { text: "", font: "ANSI Shadow", color: "#8A5CF6", size: 1, enabled: false },
 		stats: { enabled: false, items: [] },
 		blocks: [],
-		recently: false,
 		graph: { enabled: false, exclude: [] },
 	};
 

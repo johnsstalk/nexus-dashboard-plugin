@@ -1,10 +1,11 @@
-import { MarkdownRenderChild, Menu, Notice, TFile, TAbstractFile, type EventRef } from "obsidian";
+import { MarkdownRenderChild, Menu, Notice, TFile } from "obsidian";
 import type NexusDashboardPlugin from "./main";
 import { DIVIDER_PRESETS } from "./defaults";
 import { SMALL_ICONS, ICONS, DEFAULT_ICON } from "./icons";
 import { renderFiglet, getFontByName } from "./figlet";
 import { parseDashboard, buildDefaultConfig } from "./parser";
 import { safeParseInt, splitCsv } from "./utils";
+import { buildTimelineEvents } from "./timeline";
 import {
 	DashboardConfig,
 	DashboardBlock,
@@ -16,8 +17,6 @@ import {
 	LinksConfig,
 	RowConfig,
 	ColumnConfig,
-	RecentlyConfig,
-	VaultListConfig,
 	VaultActivityConfig,
 	SearchConfig,
 	ContentSlotType,
@@ -26,7 +25,45 @@ import {
 	ClockConfig,
 	FileTypeChartConfig,
 	TaskSummaryConfig,
+	ObsidianBookmarkItem,
+	ActivityEvent,
 } from "./types";
+
+/** Terminal-style labels + glyphs for each timeline action. */
+const TIMELINE_ACTIONS: Record<string, { label: string; glyph: string }> = {
+	created: { label: "CREATED", glyph: "+" },
+	modified: { label: "MODIFIED", glyph: "~" },
+	deleted: { label: "DELETED", glyph: "✕" },
+	moved: { label: "MOVED", glyph: "⇄" },
+	renamed: { label: "RENAMED", glyph: "✎" },
+	opened: { label: "OPENED", glyph: "▶" },
+	task: { label: "TASK", glyph: "✓" },
+	property: { label: "PROPERTY", glyph: "#" },
+	"folder-created": { label: "FOLDER+", glyph: "▸" },
+	"folder-deleted": { label: "FOLDER-", glyph: "▾" },
+	"folder-renamed": { label: "FOLDER⇄", glyph: "▸" },
+};
+
+/** Chip definitions for interactive timeline filtering. */
+const TIMELINE_CHIPS: Array<{ id: string | null; label: string; match: (a: string) => boolean }> = [
+	{ id: null, label: "All", match: () => true },
+	{ id: "created", label: "Created", match: (a) => a === "created" },
+	{ id: "modified", label: "Modified", match: (a) => a === "modified" },
+	{ id: "deleted", label: "Deleted", match: (a) => a === "deleted" },
+	{ id: "moved", label: "Moved", match: (a) => a === "moved" },
+	{ id: "renamed", label: "Renamed", match: (a) => a === "renamed" },
+	{ id: "opened", label: "Opened", match: (a) => a === "opened" },
+	{ id: "task", label: "Tasks", match: (a) => a === "task" },
+	{ id: "property", label: "Properties", match: (a) => a === "property" },
+	{ id: "folders", label: "Folders", match: (a) => a.startsWith("folder-") },
+];
+
+/** Shared clock-time formatter for timeline rows. */
+const TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+	hour: "2-digit",
+	minute: "2-digit",
+	hour12: false,
+});
 
 export class NexusRenderer extends MarkdownRenderChild {
 	private plugin: NexusDashboardPlugin;
@@ -36,13 +73,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 	private renderQueued = false;
 	private searchAbortController: AbortController | null = null;
 	private clockInterval: ReturnType<typeof setInterval> | null = null;
-	private timelineEvents: Array<{
-		time: number;
-		action: "created" | "modified" | "deleted" | "moved";
-		path: string;
-		oldPath?: string;
-	}> = [];
-	private vaultEventRefs: EventRef[] = [];
+	private timelineRefreshInterval: ReturnType<typeof setInterval> | null = null;
 
 	constructor(
 		containerEl: HTMLElement,
@@ -59,6 +90,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 	async onload(): Promise<void> {
 		this.plugin.activeRenderers.add(this);
 		await this.render();
+		this.startTimelineRefresh();
 	}
 
 	onunload(): void {
@@ -71,10 +103,24 @@ export class NexusRenderer extends MarkdownRenderChild {
 			clearInterval(this.clockInterval);
 			this.clockInterval = null;
 		}
-		for (const ref of this.vaultEventRefs) {
-			this.plugin.app.vault.offref(ref);
+		if (this.timelineRefreshInterval) {
+			clearInterval(this.timelineRefreshInterval);
+			this.timelineRefreshInterval = null;
 		}
-		this.vaultEventRefs = [];
+	}
+
+	/** Keep relative timeline times fresh on dashboards left open. */
+	private startTimelineRefresh(): void {
+		if (this.timelineRefreshInterval) return;
+		this.timelineRefreshInterval = setInterval(() => {
+			const nodes = this.containerEl.querySelectorAll<HTMLElement>(
+				".nexus-timeline-time[data-relative='1']",
+			);
+			for (const el of nodes) {
+				const ts = Number(el.dataset.ts);
+				if (Number.isFinite(ts)) el.textContent = this.formatRelativeTime(ts);
+			}
+		}, 60_000);
 	}
 
 	async render(): Promise<void> {
@@ -167,12 +213,6 @@ export class NexusRenderer extends MarkdownRenderChild {
 			case "column":
 				this.renderColumn(containerEl, block, config);
 				break;
-			case "recently":
-				await this.renderVaultActivity(containerEl, block);
-				break;
-			case "vaultlist":
-				await this.renderVaultActivity(containerEl, block);
-				break;
 			case "vault-activity":
 				await this.renderVaultActivity(containerEl, block);
 				break;
@@ -234,7 +274,6 @@ export class NexusRenderer extends MarkdownRenderChild {
 			source.includes("links:") ||
 			source.includes("row:") ||
 			source.includes("column:") ||
-			source.includes("vaultlist:") ||
 			source.includes("vault-activity:") ||
 			source.includes("heatmap:") ||
 			source.includes("timeline:") ||
@@ -244,13 +283,6 @@ export class NexusRenderer extends MarkdownRenderChild {
 			merged.blocks = override.blocks;
 		} else {
 			merged.blocks = [];
-		}
-
-		// Recently
-		if (source.includes("recently:")) {
-			merged.recently = override.recently;
-		} else {
-			merged.recently = false;
 		}
 
 		// Graph — respect settings toggle when code block doesn't override
@@ -327,22 +359,48 @@ export class NexusRenderer extends MarkdownRenderChild {
 						};
 					}
 					return null;
-				case "quick-links":
-					if (opts.showQuickLinks !== false && opts.quickLinks && opts.quickLinks.length > 0) {
-						placed.add("quick-links");
-						return {
+				case "quick-links": {
+					if (!opts.showQuickLinks) return null;
+
+					const manualItems = opts.quickLinks?.length > 0
+						? opts.quickLinks.map((link) => ({
+							url: link.url,
+							label: link.label,
+							icon: link.icon,
+						}))
+						: [];
+
+					const bookmarkBlock = opts.showBookmarksAsLinks ? this.buildBookmarkLinks() : null;
+					const hasBookmarks = bookmarkBlock && bookmarkBlock.items.length > 0;
+
+					if (manualItems.length === 0 && !hasBookmarks) return null;
+					placed.add("quick-links");
+
+					const children: DashboardBlock[] = [];
+
+					if (manualItems.length > 0) {
+						children.push({
 							kind: "links",
 							title: opts.showQuickLinksDivider ? opts.quickLinksDividerLabel || "Quick Links" : undefined,
 							columns: 1,
-							items: opts.quickLinks.map((link) => ({
-								url: link.url,
-								label: link.label,
-								icon: link.icon,
-							})),
-						} as LinksConfig;
+							items: manualItems,
+						} as LinksConfig);
 					}
-					return null;
+
+					if (hasBookmarks) {
+						children.push(bookmarkBlock!);
+					}
+
+					if (children.length === 1) return children[0];
+
+					return {
+						kind: "column",
+						spacing: "0.25rem",
+						children: children as ColumnConfig["children"],
+					};
+				}
 				case "vault-activity": {
+					if (!opts.showVaultActivity) return null;
 					// If a vault list name is specified, look it up
 					if (vaultListName) {
 						const vlEntry = opts.vaultLists.find((v) => v.name === vaultListName);
@@ -356,12 +414,19 @@ export class NexusRenderer extends MarkdownRenderChild {
 							tags: vlEntry.tags
 								? splitCsv(vlEntry.tags)
 								: undefined,
-								label: vlEntry.name,
+								label: vlEntry.label || undefined,
 							} as VaultActivityConfig;
 						}
 					}
-					// No vault list selected - render nothing
-					return null;
+					// No vault list selected - fall back to the global config
+					// (empty path/tags shows recently modified files from the whole vault)
+					placed.add("vault-activity");
+					return {
+						kind: "vault-activity",
+						show: true,
+						count: opts.vaultActivityCount,
+						label: opts.vaultActivityLabel || undefined,
+					} as VaultActivityConfig;
 				}
 				case "divider":
 					placed.add("divider");
@@ -572,19 +637,23 @@ export class NexusRenderer extends MarkdownRenderChild {
 		}
 
 		// ── Fallback: add unplaced content as standalone blocks ──
-
-		const fallbackTypes: ContentSlotType[] = [
-			"moc-cards",
-			"quick-links",
-			"heatmap",
-			"timeline",
-			"clock",
-			"filetypes",
-		];
-		for (const slotType of fallbackTypes) {
-			if (!placed.has(slotType)) {
-				const block = renderSlotChildren(slotType);
-				if (block) config.blocks.push(block);
+		// Only for fresh installs with no custom layouts. Once the user has
+		// configured row/column layouts, those layouts are the source of truth
+		// and unplaced components are intentionally hidden.
+		if (!hasUserLayouts) {
+			const fallbackTypes: ContentSlotType[] = [
+				"moc-cards",
+				"quick-links",
+				"heatmap",
+				"timeline",
+				"clock",
+				"filetypes",
+			];
+			for (const slotType of fallbackTypes) {
+				if (!placed.has(slotType)) {
+					const block = renderSlotChildren(slotType);
+					if (block) config.blocks.push(block);
+				}
 			}
 		}
 
@@ -719,6 +788,97 @@ export class NexusRenderer extends MarkdownRenderChild {
 			pill.target = "_blank";
 			pill.rel = "noopener";
 			pill.textContent = item.label || item.url;
+		}
+	}
+
+	// ── Bookmark helpers ──────────────────────────────────────
+
+	/** Flatten nested bookmark groups into a single-level array. */
+	private flattenBookmarks(items: ObsidianBookmarkItem[]): ObsidianBookmarkItem[] {
+		const result: ObsidianBookmarkItem[] = [];
+		for (const item of items) {
+			if (item.type === "group") {
+				if (item.items) {
+					result.push(...this.flattenBookmarks(item.items));
+				}
+			} else {
+				result.push(item);
+			}
+		}
+		return result;
+	}
+
+	/** Convert an ObsidianBookmarkItem to a LinkItem (or null if unsupported). */
+	private bookmarkToLinkItem(bookmark: ObsidianBookmarkItem): { url: string; label: string; icon: string } | null {
+		const vaultName = encodeURIComponent((this.plugin.app.vault as any).getName?.() || "");
+		switch (bookmark.type) {
+			case "file":
+			case "heading":
+			case "block": {
+				if (!bookmark.path) return null;
+				let url = `obsidian://open?vault=${vaultName}&file=${encodeURIComponent(bookmark.path)}`;
+				if (bookmark.subpath) {
+					url += encodeURIComponent(bookmark.subpath);
+				}
+				const name = bookmark.path.split("/").pop()?.replace(/\.[^/.]+$/, "") || bookmark.title;
+				return { url, label: name, icon: "File" };
+			}
+			case "folder": {
+				if (!bookmark.path) return null;
+				const url = `obsidian://open?vault=${vaultName}&file=${encodeURIComponent(bookmark.path)}`;
+				const name = bookmark.path.split("/").pop() || bookmark.title;
+				return { url, label: name, icon: "Folder" };
+			}
+			case "search": {
+				const query = bookmark.query || bookmark.title;
+				const url = `obsidian://search?vault=${vaultName}&query=${encodeURIComponent(query)}`;
+				return { url, label: query, icon: "Search" };
+			}
+			case "url": {
+				if (!bookmark.url) return null;
+				return { url: bookmark.url, label: bookmark.title, icon: "Link" };
+			}
+			default:
+				return null;
+		}
+	}
+
+	/**
+	 * Reads bookmarks from Obsidian's built-in Bookmarks plugin.
+	 * Returns a LinksConfig block, or null if no bookmarks or plugin unavailable.
+	 */
+	private buildBookmarkLinks(): LinksConfig | null {
+		try {
+			const internalPlugins = (this.plugin.app as any).internalPlugins;
+			if (!internalPlugins) return null;
+
+			const bookmarkPlugin = internalPlugins.plugins?.["bookmarks"];
+			if (!bookmarkPlugin?.enabled) return null;
+
+			const instance = bookmarkPlugin.instance;
+			if (!instance) return null;
+
+			const items: ObsidianBookmarkItem[] =
+				(typeof instance.getBookmarks === "function" ? instance.getBookmarks() : undefined) ??
+				(instance.data?.items as ObsidianBookmarkItem[] | undefined) ??
+				[];
+			if (!items || items.length === 0) return null;
+
+			const flat = this.flattenBookmarks(items);
+			const linkItems = flat
+				.map((b) => this.bookmarkToLinkItem(b))
+				.filter((l): l is { url: string; label: string; icon: string } => l !== null);
+
+			if (linkItems.length === 0) return null;
+
+			return {
+				kind: "links",
+				title: "Bookmarks",
+				columns: 1,
+				items: linkItems,
+			} as LinksConfig;
+		} catch {
+			return null;
 		}
 	}
 
@@ -1025,7 +1185,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 
 	private async renderVaultActivity(
 		containerEl: HTMLElement,
-		config: RecentlyConfig | VaultListConfig | VaultActivityConfig,
+		config: VaultActivityConfig,
 	): Promise<void> {
 		const opts = this.plugin.settings;
 		const filterConfig = { path: config.path, tags: config.tags, count: config.count };
@@ -1034,22 +1194,15 @@ export class NexusRenderer extends MarkdownRenderChild {
 
 		const wrapperEl = containerEl.createDiv({ cls: "nexus-section" });
 
-		// Determine label
-		let label: string | undefined;
-		if (config.kind === "vault-activity") {
-			label = config.label || opts.vaultActivityLabel || "VAULT ACTIVITY";
-		} else if (config.kind === "vaultlist") {
-			label = config.path || "Vault List";
-		} else {
-			label = "Recently Modified";
-		}
-
-		if (label) {
-			this.renderDivider(wrapperEl, label);
-		}
+		// Determine label (empty label hides the header divider)
+		const label = config.label || opts.vaultActivityLabel || "";
+		if (label) this.renderDivider(wrapperEl, label);
 
 		// Compact file list
-		const listEl = wrapperEl.createDiv({ cls: "nexus-vault-activity" });
+		const listEl = wrapperEl.createDiv({
+			cls: `nexus-vault-activity${opts.vaultActivityShowFade ? " nexus-fade-mask" : ""}`,
+		});
+		listEl.style.maxHeight = `${opts.vaultActivityMaxHeight}px`;
 
 		const relativeTime = (mtime: number): string => {
 			const now = Date.now();
@@ -1099,25 +1252,37 @@ export class NexusRenderer extends MarkdownRenderChild {
 		const startDate = new Date(today);
 		startDate.setDate(startDate.getDate() - (weeks - 1) * 7 - startDate.getDay());
 
-		// Count files per day using only markdown files + excludeFolders
+		// Count unique (path, day) activity: files with a log entry are only
+		// counted via the log (mtime would double-count the same activity).
 		const dayCounts = new Map<string, number>();
+		const loggedPaths = new Set<string>();
+		for (const event of this.plugin.settings.activityLog || []) {
+			if (event.action === "deleted" || event.action.startsWith("folder-")) continue;
+			loggedPaths.add(event.path);
+		}
+
 		const files = this.plugin.app.vault.getMarkdownFiles();
 		for (const file of files) {
+			if (loggedPaths.has(file.path)) continue;
 			// Skip excluded folders
 			const firstFolder = file.path.split("/")[0];
 			if (exclude.includes(firstFolder)) continue;
 
 			// Use ctime (created) or mtime — prefer mtime for activity
 			const d = new Date(file.stat.mtime);
-			const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+			const key = this.dateKey(d);
 			dayCounts.set(key, (dayCounts.get(key) || 0) + 1);
 		}
 
-		// Merge timeline events
-		for (const event of this.timelineEvents) {
-			if (event.action === "deleted") continue;
+		// Merge persisted activity log (count each file once per day)
+		const loggedDays = new Set<string>();
+		for (const event of this.plugin.settings.activityLog || []) {
+			if (event.action === "deleted" || event.action.startsWith("folder-")) continue;
 			const d = new Date(event.time);
-			const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+			const key = this.dateKey(d);
+			const pair = `${key}|${event.path}`;
+			if (loggedDays.has(pair)) continue;
+			loggedDays.add(pair);
 			dayCounts.set(key, (dayCounts.get(key) || 0) + 1);
 		}
 
@@ -1233,120 +1398,249 @@ export class NexusRenderer extends MarkdownRenderChild {
 	// ── Render: Timeline ─────────────────────────────────────
 
 	private renderTimeline(containerEl: HTMLElement, config: TimelineConfig): void {
-		const count = config.count || 20;
-		const label = config.label || "ACTIVITY";
-		const exclude = config.exclude || this.plugin.settings.excludeFolders || [];
+		const opts = this.plugin.settings;
+		const label = config.label || opts.activityTimelineLabel || "ACTIVITY";
+		const baseCount = config.count || opts.activityTimelineCount || 20;
+		const state: { base: number; displayed: number; filter: string | null } = {
+			base: baseCount,
+			displayed: baseCount,
+			filter: null,
+		};
 
-		// Build initial activity from vault files sorted by mtime
-		const files = this.plugin.app.vault.getFiles();
-		const recent = files
-			.filter((f) => {
-				const firstFolder = f.path.split("/")[0];
-				return !exclude.includes(firstFolder);
-			})
-			.sort((a, b) => b.stat.mtime - a.stat.mtime)
-			.slice(0, count);
+		// Scope refreshes to this block so chips / "Show more" don't wipe
+		// the other sections of the dashboard.
+		const root = containerEl.createDiv({ cls: "nexus-timeline-root" });
 
-		const wrapper = containerEl.createDiv({ cls: "nexus-section" });
-		if (label) {
-			this.renderDivider(wrapper, label);
-		}
-
-		const listEl = wrapper.createDiv({ cls: "nexus-timeline" });
-
-		// Merge stored events with file-based entries, dedupe, take latest
-		const allEvents = [...this.timelineEvents];
-		for (const file of recent) {
-			const exists = allEvents.some((e) => e.path === file.path && e.action === "modified");
-			if (!exists) {
-				allEvents.push({ time: file.stat.mtime, action: "modified", path: file.path });
+		const build = () => {
+			root.empty();
+			const wrapper = root.createDiv({ cls: "nexus-section" });
+			if (label) {
+				this.renderDivider(wrapper, label);
 			}
-		}
-		allEvents.sort((a, b) => b.time - a.time);
-		const displayed = allEvents.slice(0, count);
+			this.renderTimelineBody(wrapper, config, state, build);
+		};
 
-		if (displayed.length === 0) return;
-
-		const timeFormatter = new Intl.DateTimeFormat(undefined, {
-			hour: "2-digit",
-			minute: "2-digit",
-			hour12: false,
-		});
-
-		for (const event of displayed) {
-			const row = listEl.createDiv({ cls: "nexus-timeline-row" });
-			row.createEl("span", {
-				text: timeFormatter.format(new Date(event.time)),
-				cls: "nexus-timeline-time",
-			});
-			row.createEl("span", {
-				text: event.action.padEnd(9),
-				cls: `nexus-timeline-action nexus-timeline-action--${event.action}`,
-			});
-			row.createEl("span", {
-				text: event.oldPath ? `${event.oldPath} → ${event.path}` : event.path,
-				cls: "nexus-timeline-path",
-			});
-
-			// Click to open file
-			row.addEventListener("click", () => {
-				const file = this.plugin.app.vault.getAbstractFileByPath(event.path);
-				if (file instanceof TFile) {
-					this.plugin.app.workspace.openLinkText(event.path, "", false);
-				}
-			});
-		}
-
-		// Register vault event listeners for real-time tracking
-		this.registerTimelineEvents();
+		build();
 	}
 
-	private registerTimelineEvents(): void {
-		if (this.vaultEventRefs.length > 0) return;
+	private renderTimelineBody(
+		wrapper: HTMLElement,
+		config: TimelineConfig,
+		state: { base: number; displayed: number; filter: string | null },
+		refresh: () => void,
+	): void {
+		const opts = this.plugin.settings;
+		const showChips = config.showChips ?? opts.activityTimelineShowChips;
+		const showMore = config.showMore ?? opts.activityTimelineShowMore;
+		const group = config.group || opts.activityTimelineGroup || "day";
 
-		const onVaultCreate = (file: TAbstractFile) => {
-			if (!(file instanceof TFile)) return;
-			this.timelineEvents.unshift({ time: Date.now(), action: "created", path: file.path });
-			this.pruneTimelineEvents(100);
-		};
+		const events = this.buildTimelineEvents(config, state.filter);
 
-		const onVaultModify = (file: TAbstractFile) => {
-			if (!(file instanceof TFile)) return;
-			const existing = this.timelineEvents.findIndex(
-				(e) => e.path === file.path && e.action === "modified",
-			);
-			if (existing >= 0) {
-				this.timelineEvents[existing].time = Date.now();
-			} else {
-				this.timelineEvents.unshift({ time: Date.now(), action: "modified", path: file.path });
-			}
-			this.pruneTimelineEvents(100);
-		};
+		if (events.length === 0) {
+			wrapper.createDiv({
+				cls: "nexus-timeline-empty",
+				text: "No activity recorded yet.",
+			});
+			return;
+		}
 
-		const onVaultDelete = (file: TAbstractFile) => {
-			if (!(file instanceof TFile)) return;
-			this.timelineEvents.unshift({ time: Date.now(), action: "deleted", path: file.path });
-			this.pruneTimelineEvents(100);
-		};
+		if (showChips) {
+			this.renderTimelineChips(wrapper, state, () => {
+				state.displayed = state.base;
+				refresh();
+			});
+		}
 
-		const onVaultRename = (file: TAbstractFile, oldPath: string) => {
-			if (!(file instanceof TFile)) return;
-			this.timelineEvents.unshift({ time: Date.now(), action: "moved", path: file.path, oldPath });
-			this.pruneTimelineEvents(100);
-		};
+		const listEl = wrapper.createDiv({
+			cls: `nexus-timeline${opts.activityTimelineShowFade ? " nexus-fade-mask" : ""}`,
+		});
+		listEl.style.maxHeight = `${opts.activityTimelineMaxHeight}px`;
 
-		this.vaultEventRefs.push(
-			this.plugin.app.vault.on("create", onVaultCreate),
-			this.plugin.app.vault.on("modify", onVaultModify),
-			this.plugin.app.vault.on("delete", onVaultDelete),
-			this.plugin.app.vault.on("rename", onVaultRename),
+		const limit = Math.min(state.displayed, events.length);
+		const slice = events.slice(0, limit);
+
+		if (group === "file") {
+			this.renderTimelineByFile(listEl, slice, config);
+		} else {
+			this.renderTimelineByDay(listEl, slice, config);
+		}
+
+		if (showMore && events.length > limit) {
+			const moreEl = wrapper.createEl("button", {
+				cls: "nexus-timeline-more",
+				text: `Show more (${events.length - limit} more)`,
+			});
+			moreEl.addEventListener("click", () => {
+				state.displayed += state.base;
+				refresh();
+			});
+		}
+	}
+
+	private buildTimelineEvents(config: TimelineConfig, filter: string | null): ActivityEvent[] {
+		const opts = this.plugin.settings;
+		const onlyMarkdown = config.onlyMarkdown ?? opts.activityTimelineOnlyMarkdown;
+		const include =
+			config.include && config.include.length > 0
+				? config.include
+				: splitCsv(opts.activityTimelineIncludeFolders || "");
+		const excludeFolders = config.exclude || opts.excludeFolders || [];
+		const excludeExt = config.excludeExt || [];
+		const types = config.types || [];
+		const count = config.count || opts.activityTimelineCount || 20;
+
+		const chipMatch = TIMELINE_CHIPS.find((c) => c.id === filter)?.match || (() => true);
+
+		return buildTimelineEvents(
+			{
+				log: opts.activityLog || [],
+				files: this.plugin.getRecentFiles().map((f) => ({
+					path: f.path,
+					extension: f.extension,
+					mtime: f.stat.mtime,
+				})),
+			},
+			{ onlyMarkdown, include, excludeFolders, excludeExt, types, chipMatch, count },
 		);
 	}
 
-	private pruneTimelineEvents(max: number): void {
-		if (this.timelineEvents.length > max) {
-			this.timelineEvents.length = max;
+	private renderTimelineByDay(listEl: HTMLElement, events: ActivityEvent[], config: TimelineConfig): void {
+		const opts = this.plugin.settings;
+		const showDate = config.showDate ?? opts.activityTimelineShowDate;
+		let lastKey: string | null = null;
+		for (const event of events) {
+			if (showDate) {
+				const { key, label } = this.timelineDayInfo(event.time);
+				if (key !== lastKey) {
+					lastKey = key;
+					listEl.createDiv({ cls: "nexus-timeline-day", text: label }).dataset.key = key;
+				}
+			}
+			this.renderTimelineRow(listEl, event, config);
 		}
+	}
+
+	private renderTimelineByFile(listEl: HTMLElement, events: ActivityEvent[], config: TimelineConfig): void {
+		const counts = new Map<string, number>();
+		for (const ev of events) {
+			counts.set(ev.path, (counts.get(ev.path) || 0) + 1);
+		}
+		const seen = new Set<string>();
+		for (const ev of events) {
+			if (seen.has(ev.path)) continue;
+			seen.add(ev.path);
+			this.renderTimelineRow(listEl, ev, config, counts.get(ev.path) || 1);
+		}
+	}
+
+	private renderTimelineRow(
+		listEl: HTMLElement,
+		event: ActivityEvent,
+		config: TimelineConfig,
+		total = 1,
+	): void {
+		const opts = this.plugin.settings;
+		const showRelative = config.relative ?? opts.activityTimelineShowRelative;
+		const meta = TIMELINE_ACTIONS[event.action] || { label: event.action, glyph: "•" };
+
+		const row = listEl.createDiv({ cls: "nexus-timeline-row" });
+
+		const timeEl = row.createEl("span", { cls: "nexus-timeline-time" });
+		if (showRelative) {
+			timeEl.dataset.relative = "1";
+			timeEl.dataset.ts = String(event.time);
+			timeEl.textContent = this.formatRelativeTime(event.time);
+		} else {
+			timeEl.textContent = TIME_FORMATTER.format(new Date(event.time));
+		}
+
+		const actionEl = row.createEl("span", {
+			cls: `nexus-timeline-action nexus-timeline-action--${event.action}`,
+		});
+		actionEl.createEl("span", { text: meta.glyph, cls: "nexus-timeline-glyph" });
+		actionEl.appendText(" " + meta.label);
+
+		const pathEl = row.createEl("span", { cls: "nexus-timeline-path" });
+		if (event.oldPath && (event.action === "moved" || event.action === "renamed" || event.action === "folder-renamed")) {
+			pathEl.createEl("span", { text: event.oldPath, cls: "nexus-timeline-path-old" });
+			pathEl.appendText(" → ");
+			pathEl.appendText(event.path);
+		} else {
+			pathEl.appendText(event.path);
+		}
+		if (event.detail) {
+			pathEl.createEl("span", { text: ` · ${event.detail}`, cls: "nexus-timeline-detail" });
+		}
+
+		row.title = new Date(event.time).toLocaleString();
+
+		if (total > 1) {
+			row.createEl("span", { text: `+${total - 1}`, cls: "nexus-timeline-badge" });
+		}
+
+		const file = this.plugin.app.vault.getAbstractFileByPath(event.path);
+		const isFile = file instanceof TFile;
+		const isDeleted = event.action === "deleted" || event.action === "folder-deleted" || !file;
+
+		if (isDeleted) {
+			row.classList.add("is-deleted");
+		}
+
+		row.addEventListener("click", () => {
+			if (isFile) {
+				this.plugin.app.workspace.openLinkText(event.path, "", false);
+			} else {
+				new Notice("This entry is no longer in the vault.");
+			}
+		});
+	}
+
+	private renderTimelineChips(
+		wrapper: HTMLElement,
+		state: { filter: string | null },
+		onSelect: () => void,
+	): void {
+		const chipsEl = wrapper.createDiv({ cls: "nexus-timeline-chips" });
+		for (const chip of TIMELINE_CHIPS) {
+			const btn = chipsEl.createEl("button", {
+				cls: `nexus-chip${state.filter === chip.id ? " is-active" : ""}`,
+				text: chip.label,
+			});
+			btn.addEventListener("click", () => {
+				state.filter = chip.id;
+				onSelect();
+			});
+		}
+	}
+
+	private timelineDayInfo(time: number): { key: string; label: string } {
+		const d = new Date(time);
+		const key = this.dateKey(d);
+		const now = new Date();
+		if (key === this.dateKey(now)) return { key, label: "Today" };
+		const yesterday = new Date(now);
+		yesterday.setDate(yesterday.getDate() - 1);
+		if (key === this.dateKey(yesterday)) return { key, label: "Yesterday" };
+		return {
+			key,
+			label: d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }),
+		};
+	}
+
+	private dateKey(d: Date): string {
+		return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+	}
+
+	private formatRelativeTime(ts: number): string {
+		const s = Math.round((Date.now() - ts) / 1000);
+		if (s < 60) return "just now";
+		const m = Math.round(s / 60);
+		if (m < 60) return `${m}m ago`;
+		const h = Math.round(m / 60);
+		if (h < 24) return `${h}h ago`;
+		const d = Math.round(h / 24);
+		if (d < 7) return `${d}d ago`;
+		return new Date(ts).toLocaleDateString();
 	}
 
 	// ── Render: Clock ────────────────────────────────────────
@@ -1564,7 +1858,10 @@ export class NexusRenderer extends MarkdownRenderChild {
 			if (group) group.tasks.push(task);
 			}
 
-			const listEl = taskEl.createDiv({ cls: "nexus-tasks-list" });
+			const listEl = taskEl.createDiv({
+				cls: `nexus-tasks-list${this.plugin.settings.taskSummaryShowFade ? " nexus-fade-mask" : ""}`,
+			});
+			listEl.style.maxHeight = `${this.plugin.settings.taskSummaryMaxHeight}px`;
 			let shownTasks = 0;
 
 			for (const [, group] of grouped) {
@@ -1664,18 +1961,6 @@ export class NexusRenderer extends MarkdownRenderChild {
 				this.collectCardPaths(block.children, paths, exclude);
 			} else if (block.kind === "column") {
 				this.collectCardPaths(block.children, paths, exclude);
-			} else if (block.kind === "links") {
-				for (const item of block.items) {
-					if (item.url.startsWith("obsidian://")) {
-						const match = item.url.match(/file=([^&]+)/);
-						if (match) {
-							const path = decodeURIComponent(match[1]);
-							if (!paths.includes(path) && !exclude.some((ex) => path.includes(ex))) {
-								paths.push(path);
-							}
-						}
-					}
-				}
 			}
 		}
 	}
