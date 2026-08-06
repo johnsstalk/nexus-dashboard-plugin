@@ -1,8 +1,12 @@
 # Changelog
 
+## v1.3.0
+
+Stable release — feature set unchanged from `v1.3.0-beta.1` (see entry below). The first release meeting the current feature and quality bar.
+
 ## v1.3.0-beta.1
 
-> Everything since v1.2.0 shipped here as a single minor. This entry was previously split across the never-released `v1.2.2-beta.1` / `v1.2.2-beta.2` line and renumbered — features under a patch number was a semver mistake.
+> Everything since v1.2.0 shipped here as a single minor. This entry was previously split across the never-released `v1.2.2-beta.1` / `v1.2.2-beta.2` line and renumbered — features under a patch number was a semver mistake. Promoted to stable as `v1.3.0` on 2026-08-06.
 
 ### Added
 
@@ -127,6 +131,8 @@
 
 ## v1.2.0
 
+> Early, minimal-stage release; v1.3.0 is the first release meeting the current feature and quality bar.
+
 ### Fixed
 
 - Font selection now actually uses the chosen font (was always using default)
@@ -148,6 +154,8 @@
 ---
 
 ## v1.1.0
+
+> Early, minimal-stage release; v1.3.0 is the first release meeting the current feature and quality bar.
 
 Initial release.
 
