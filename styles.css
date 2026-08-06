@@ -81,6 +81,110 @@
   line-height: 1;
 }
 
+.nexus-stat-new-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.nexus-stat-new-note:hover {
+  transform: translateY(-1px);
+  border-color: var(--interactive-accent);
+  box-shadow: 0 2px 8px var(--background-modifier-box-shadow, rgba(0, 0, 0, 0.06));
+}
+
+.nexus-stat-new-note .nexus-stat-new-note-icon,
+.nexus-stat-new-note svg {
+  color: var(--interactive-accent);
+  flex-shrink: 0;
+}
+
+.nexus-stat-entry {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-secondary);
+}
+
+.nexus-stat-entry-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nexus-stat-entry-row + .nexus-stat-entry-row {
+  margin-top: 8px;
+}
+
+.nexus-stat-entry-label,
+.nexus-stat-entry-filter {
+  flex: 1;
+  min-width: 90px;
+}
+
+.nexus-stat-entry-label input,
+.nexus-stat-entry-filter select.dropdown {
+  width: 100%;
+}
+
+.nexus-stat-entry-filter select.dropdown {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nexus-stat-entry-metric,
+.nexus-stat-entry-scope,
+.nexus-stat-entry-recursive {
+  flex-shrink: 0;
+}
+
+.nexus-stat-entry-metric {
+  width: 110px;
+}
+
+.nexus-stat-entry-scope {
+  width: 120px;
+}
+
+.nexus-stat-entry-recursive {
+  width: 150px;
+}
+
+.nexus-stat-entry-metric select,
+.nexus-stat-entry-scope select,
+.nexus-stat-entry-recursive select {
+  width: 100%;
+}
+
+.nexus-stat-entry-delete {
+  flex-shrink: 0;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+}
+
+.nexus-stat-entry-summary {
+  margin: 4px 0 0;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ============================================================
    Nexus Hub — Theme-Aware MOC Card Grid
    ============================================================ */
@@ -1072,6 +1176,20 @@
   color: var(--text-on-accent);
 }
 
+.nexus-link-pill-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+  line-height: 1;
+}
+
+.nexus-link-pill-icon svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
 /* ============================================================
    Nexus Search — Vault quick navigation
    ============================================================ */
@@ -1267,6 +1385,131 @@
   padding: 0 8px;
 }
 
+.nexus-settings-collapse-bar {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0.25rem 0 1rem;
+}
+
+select.dropdown option:disabled {
+  color: var(--text-faint);
+}
+
+/* ============================================================
+   Settings UI — Component Cards
+   ============================================================ */
+.nexus-component-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-secondary);
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+.nexus-component-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.12s ease;
+}
+
+.nexus-component-card-header:hover {
+  background: var(--background-modifier-hover);
+}
+
+.nexus-component-card-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.nexus-component-card-chevron.collapsed {
+  transform: rotate(-90deg);
+}
+
+.nexus-component-card-chevron svg {
+  width: 12px;
+  height: 12px;
+}
+
+.nexus-component-card-title {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.nexus-component-card-title-text {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nexus-component-card-title-desc {
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nexus-component-card-toggle {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.nexus-component-card-toggle .checkbox-container {
+  margin: 0;
+}
+
+.nexus-component-card.is-disabled .nexus-component-card-body {
+  opacity: 0.65;
+  pointer-events: none;
+}
+
+.nexus-component-card.is-disabled .nexus-component-card-header:hover {
+  background: transparent;
+}
+
+.nexus-component-card-body {
+  padding: 4px 12px 12px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.nexus-settings-subgroup {
+  margin-top: 12px;
+}
+
+.nexus-settings-subgroup-title {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  padding: 2px 0 6px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin-bottom: 4px;
+}
+
+.nexus-component-card-body > .setting-item:first-child,
+.nexus-settings-subgroup > .setting-item:first-child {
+  border-top: none;
+}
+
 /* ============================================================
    Row Editor
    ============================================================ */
@@ -1371,6 +1614,19 @@
 
   .nexus-links-pills {
     gap: 4px;
+  }
+
+  .nexus-settings-tabs {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .nexus-settings-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nexus-settings-tab {
+    flex-shrink: 0;
   }
 
 }

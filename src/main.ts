@@ -7,12 +7,19 @@ import {
 	TFile,
 	TFolder,
 	TAbstractFile,
+	moment,
 } from "obsidian";
 import { NexusSettings, ActivityEvent } from "./types";
 import { DEFAULT_SETTINGS, mergeSettings, deepCloneDefaults } from "./defaults";
-import { hasExtension, ensureExtension, splitCsv } from "./utils";
-import { NexusSettingTab } from "./settings";
+import { hasExtension, ensureExtension } from "./utils";
+import { NexusSettingTab, clearVaultFoldersCache } from "./settings";
 import { NexusRenderer } from "./renderer";
+import {
+	STARTUP_RECONCILE_LOOKBACK_MS,
+	collectModifiedEvents,
+	collectRenameEvents,
+	TimelineFileMeta,
+} from "./timeline";
 
 export default class NexusDashboardPlugin extends Plugin {
 	settings: NexusSettings = DEFAULT_SETTINGS;
@@ -27,6 +34,7 @@ export default class NexusDashboardPlugin extends Plugin {
 	private propertySnapshot = new Map<string, string>();
 	private openedThrottle = new Map<string, number>();
 	private recentFiles: { at: number; files: TFile[] } | null = null;
+	private fileMtimes = new Map<string, number>();
 	private pluginLoadTime = Date.now();
 	private startupMuted = true;
 
@@ -34,10 +42,12 @@ export default class NexusDashboardPlugin extends Plugin {
 		this.pluginLoadTime = Date.now();
 		setTimeout(() => {
 			this.startupMuted = false;
+			this.reconcileStartupChanges();
 		}, 5000);
 
 		await this.loadSettings();
 		this.purgeStartupArtifacts();
+		this.primeFileMtimes();
 
 		// ── Migration: append .md to extension-free MOC paths ──
 		let migrated = false;
@@ -112,6 +122,7 @@ export default class NexusDashboardPlugin extends Plugin {
 		// ── Update paths on file rename/move ───────────────
 		this.registerEvent(
 			this.app.vault.on("rename", (file: TAbstractFile, oldPath: string) => {
+				clearVaultFoldersCache();
 				if (file instanceof TFile) {
 					const oldPathLower = oldPath.toLowerCase();
 					const newPath = file.path;
@@ -183,7 +194,7 @@ export default class NexusDashboardPlugin extends Plugin {
 	async loadSettings() {
 		try {
 			const data = await this.loadData();
-			this.settings = mergeSettings(data, splitCsv);
+			this.settings = mergeSettings(data);
 		} catch {
 			this.settings = deepCloneDefaults();
 		}
@@ -213,6 +224,55 @@ export default class NexusDashboardPlugin extends Plugin {
 		this.settings.activityLog = [];
 		void this.saveData(this.settings);
 		this.rerenderDashboards();
+	}
+
+	/**
+	 * One-time pass after the startup mute window: recover "modified" events
+	 * for files that changed on disk while Obsidian wasn't running (e.g. edits
+	 * made by external tools) so the timeline reflects them. Runs only when
+	 * tracking is enabled, and merges events into the log exactly once.
+	 */
+	private reconcileStartupChanges(): void {
+		if (!this.settings.activityTrackingEnabled) return;
+
+		const files: TimelineFileMeta[] = this.app.vault.getMarkdownFiles().map((f) => ({
+			path: f.path,
+			extension: f.extension,
+			mtime: f.stat.mtime,
+		}));
+
+		const opts = {
+			lookbackMs: STARTUP_RECONCILE_LOOKBACK_MS,
+			toleranceMs: 1000,
+			onlyMarkdown: true,
+		};
+
+		// External renames surface as a "deleted" event for the old path plus a
+		// file on disk whose mtime matches (renames preserve mtime). Recover
+		// them as renamed/moved and drop the misleading "deleted" rows.
+		const rename = collectRenameEvents(files, this.settings.activityLog, opts);
+		const renameTargets = new Set(rename.events.map((e) => e.path));
+
+		const modified = collectModifiedEvents(
+			files.filter((f) => !renameTargets.has(f.path)),
+			this.settings.activityLog,
+			opts,
+		);
+
+		const events = [...rename.events, ...modified];
+		if (events.length === 0 && rename.consumed.length === 0) return;
+
+		const consumedPaths = new Map(rename.consumed.map((c) => [c.path + "@" + c.time, true] as const));
+		this.settings.activityLog = this.settings.activityLog.filter(
+			(ev) => !(ev.action === "deleted" && consumedPaths.has(ev.path + "@" + ev.time)),
+		);
+		this.settings.activityLog.push(...events);
+		this.settings.activityLog.sort((a, b) => b.time - a.time);
+		const max = Math.max(50, this.settings.activityLogMax || 500);
+		if (this.settings.activityLog.length > max) {
+			this.settings.activityLog.length = max;
+		}
+		this.schedulePersist();
 	}
 
 	/**
@@ -250,6 +310,8 @@ export default class NexusDashboardPlugin extends Plugin {
 					if (file.isRoot()) return;
 					this.recordActivity({ action: "folder-created", path: file.path });
 				} else if (file instanceof TFile) {
+					const mtime = file.stat?.mtime;
+					if (mtime) this.fileMtimes.set(file.path, mtime);
 					this.recordActivity({
 						action: "created",
 						path: file.path,
@@ -263,7 +325,11 @@ export default class NexusDashboardPlugin extends Plugin {
 			this.app.vault.on("modify", (file: TAbstractFile) => {
 				if (!(file instanceof TFile)) return;
 				this.recentFiles = null;
-				if (this.isStartupArtifact(file)) return;
+				// Only filter genuine startup-indexing modifies (mtime before
+				// load). Real edits have a fresh mtime and must be live.
+				const mtime = file.stat?.mtime;
+				if (mtime === undefined || mtime < this.pluginLoadTime - 3000) return;
+				this.fileMtimes.set(file.path, mtime);
 				this.recordActivity({ action: "modified", path: file.path });
 			}),
 		);
@@ -274,7 +340,13 @@ export default class NexusDashboardPlugin extends Plugin {
 				if (file instanceof TFolder) {
 					this.recordActivity({ action: "folder-deleted", path: file.path });
 				} else if (file instanceof TFile) {
-					this.recordActivity({ action: "deleted", path: file.path });
+					const mtime = this.fileMtimes.get(file.path);
+					this.fileMtimes.delete(file.path);
+					this.recordActivity({
+						action: "deleted",
+						path: file.path,
+						...(mtime !== undefined ? { mtime } : {}),
+					});
 				}
 				this.taskSnapshot.delete(file.path);
 				this.propertySnapshot.delete(file.path);
@@ -292,6 +364,13 @@ export default class NexusDashboardPlugin extends Plugin {
 						oldPath,
 					});
 				} else if (file instanceof TFile) {
+					const m = this.fileMtimes.get(oldPath);
+					if (m !== undefined) this.fileMtimes.set(file.path, m);
+					else {
+						const st = file.stat?.mtime;
+						if (st) this.fileMtimes.set(file.path, st);
+					}
+					this.fileMtimes.delete(oldPath);
 					this.recordActivity({
 						action: sameFolder ? "renamed" : "moved",
 						path: file.path,
@@ -324,15 +403,18 @@ export default class NexusDashboardPlugin extends Plugin {
 
 		// Task checkbox toggles (debounced editor diff)
 		this.registerEvent(
-			this.app.workspace.on("editor-change", (editor: Editor, info: MarkdownView | MarkdownFileInfo) => {
-				if (!this.settings.activityTaskTracking) return;
-				const file = info.file;
-				if (!(file instanceof TFile)) return;
-				const existing = this.taskCheckQueue.findIndex((q) => q.file.path === file.path);
-				if (existing >= 0) this.taskCheckQueue.splice(existing, 1);
-				this.taskCheckQueue.push({ file, editor });
-				this.scheduleTaskCheck();
-			}),
+			this.app.workspace.on(
+				"editor-change",
+				(editor: Editor, info: MarkdownView | MarkdownFileInfo) => {
+					if (!this.settings.activityTaskTracking) return;
+					const file = info.file;
+					if (!(file instanceof TFile)) return;
+					const existing = this.taskCheckQueue.findIndex((q) => q.file.path === file.path);
+					if (existing >= 0) this.taskCheckQueue.splice(existing, 1);
+					this.taskCheckQueue.push({ file, editor });
+					this.scheduleTaskCheck();
+				},
+			),
 		);
 
 		// Frontmatter / property changes (debounced)
@@ -455,7 +537,20 @@ export default class NexusDashboardPlugin extends Plugin {
 
 	/** Earliest of the file's creation/modification times as Obsidian reports them. */
 	private earliestStat(file: TAbstractFile): number {
+		if (!(file instanceof TFile) || !file.stat) return Number.POSITIVE_INFINITY;
 		return Math.min(file.stat.mtime, file.stat.ctime);
+	}
+
+	/**
+	 * Pre-fill the mtime cache with every current vault file so a delete event
+	 * that fires right after load (before any create/modify on that path) can
+	 * still report the file's mtime for rename recovery.
+	 */
+	private primeFileMtimes(): void {
+		for (const f of this.app.vault.getFiles()) {
+			const m = f.stat?.mtime;
+			if (m) this.fileMtimes.set(f.path, m);
+		}
 	}
 
 	/** True if the file already existed before the plugin loaded (indexing artifact). */
@@ -482,16 +577,17 @@ export default class NexusDashboardPlugin extends Plugin {
 	private isDailyNote(file: TFile): boolean {
 		if (file.extension !== "md") return false;
 		try {
-			const dailyInstance = (this.app as any).internalPlugins?.plugins?.["daily-notes"]?.instance;
+			const dailyInstance = this.app.internalPlugins?.plugins?.["daily-notes"]?.instance;
 			const options = dailyInstance?.options;
 			if (!options) return false;
 			const folder = options.folder as string | undefined;
 			if (folder && !file.path.startsWith(folder.replace(/\/+$/, "") + "/")) return false;
 			const format = options.format as string | undefined;
 			if (!format) return false;
-			const moment = (window as any).moment;
-			if (typeof moment?.format !== "function") return false;
-			return file.basename === moment().format(format) || file.basename === moment().add(1, "day").format(format);
+			return (
+				file.basename === moment().format(format) ||
+				file.basename === moment().add(1, "day").format(format)
+			);
 		} catch {
 			return false;
 		}

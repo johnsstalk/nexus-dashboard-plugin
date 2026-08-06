@@ -99,6 +99,64 @@ stats: true
 		expect(config.stats.enabled).toBe(true);
 	});
 
+	it("parses stats items with metric, scope and recursive", () => {
+		const config = parseDashboard(`
+stats:
+  show: true
+  - label: Notes This Month
+    path: Journal
+    metric: notes
+    scope: month
+  - label: Vault Size
+    metric: size
+    recursive: false
+`);
+		expect(config.stats.enabled).toBe(true);
+		expect(config.stats.items).toHaveLength(2);
+		expect(config.stats.items[0]).toEqual({
+			label: "Notes This Month",
+			folder: "Journal",
+			metric: "notes",
+			scope: "month",
+		});
+		expect(config.stats.items[1]).toEqual({
+			label: "Vault Size",
+			metric: "size",
+			recursive: false,
+		});
+	});
+
+	it("parses new-note config in stats", () => {
+		const config = parseDashboard(`
+stats:
+  show: true
+  new-note: true
+  new-note-folder: Inbox
+  new-note-template: Templates/Inbox
+  new-note-label: "+ Add"
+`);
+		expect(config.stats.newNote).toEqual({
+			enabled: true,
+			folder: "Inbox",
+			template: "Templates/Inbox",
+			label: "+ Add",
+		});
+	});
+
+	it("parses new-note disabled override", () => {
+		const config = parseDashboard(`
+stats:
+  show: true
+  new-note: false
+`);
+		expect(config.stats.newNote).toEqual({
+			enabled: false,
+			label: "+ New Note",
+			folder: "",
+			template: "",
+		});
+	});
+
 	it("parses graph config", () => {
 		const config = parseDashboard(`
 graph:
@@ -158,17 +216,221 @@ row:
   - section:
       columns: 1
       cards:
-        - label: Left
+        - type: big
+          label: Left
           path: Left.md
   - section:
       columns: 1
       cards:
-        - label: Right
+        - type: big
+          label: Right
           path: Right.md
 `);
 		expect(config.blocks).toHaveLength(1);
 		const row = config.blocks[0];
 		expect(row.kind).toBe("row");
+		if (row.kind === "row") {
+			expect(row.children).toHaveLength(2);
+			expect(row.children.every((c) => c.kind === "section")).toBe(true);
+		}
+	});
+
+	it("nests a leaf block in the next row slot when section is empty", () => {
+		const config = parseDashboard(`
+row:
+  columns: 2
+  proportion: 50/50
+- section:
+    columns: 2
+    cards:
+      - type: big
+        label: AI Content Drafts
+        path: MOC/AI Content Drafts MOC
+        icon: Journal
+- section:
+    vault-activity:
+    path: Journal
+`);
+		expect(config.blocks).toHaveLength(1);
+		const row = config.blocks[0];
+		expect(row.kind).toBe("row");
+		if (row.kind === "row") {
+			expect(row.proportion).toBe("50/50");
+			expect(row.children).toHaveLength(2);
+			const [left, right] = row.children;
+			expect(left.kind).toBe("section");
+			if (left.kind === "section") {
+				expect(left.cards).toHaveLength(1);
+				expect(left.cards[0].label).toBe("AI Content Drafts");
+			}
+			expect(right.kind).toBe("vault-activity");
+			if (right.kind === "vault-activity") {
+				expect(right.path).toBe("Journal");
+			}
+		}
+	});
+
+	it("carries a section divider onto a leaf block in a row slot", () => {
+		const config = parseDashboard(`
+row:
+  columns: 2
+  proportion: 50/50
+- section:
+    divider:
+      title: SUB-MOC
+    columns: 2
+    cards:
+      - type: big
+        label: AI Content Drafts
+        path: MOC/AI Content Drafts MOC
+- section:
+    divider:
+      title: SUB-MOC
+    vault-activity:
+      path: Journal
+      count: 50
+`);
+		expect(config.blocks).toHaveLength(1);
+		const row = config.blocks[0];
+		expect(row.kind).toBe("row");
+		if (row.kind === "row") {
+			expect(row.children).toHaveLength(2);
+			const [left, right] = row.children;
+			expect(left.kind).toBe("section");
+			if (left.kind === "section") {
+				expect(left.divider?.title).toBe("SUB-MOC");
+				expect(left.cards).toHaveLength(1);
+			}
+			expect(right.kind).toBe("vault-activity");
+			if (right.kind === "vault-activity") {
+				expect(right.label).toBe("SUB-MOC");
+				expect(right.path).toBe("Journal");
+				expect(right.count).toBe(50);
+			}
+		}
+	});
+
+	it("attaches a pending divider to a leaf block in a row slot", () => {
+		const config = parseDashboard(`
+row:
+  columns: 2
+- section:
+    divider:
+      title: LEFT
+    cards:
+      - type: big
+        label: Left
+        path: Left.md
+- divider:
+    title: SUB-MOC
+  vault-activity:
+    path: Journal
+    count: 50
+`);
+		expect(config.blocks).toHaveLength(1);
+		const row = config.blocks[0];
+		expect(row.kind).toBe("row");
+		if (row.kind === "row") {
+			expect(row.children).toHaveLength(2);
+			const [left, right] = row.children;
+			expect(left.kind).toBe("section");
+			expect(right.kind).toBe("vault-activity");
+			if (right.kind === "vault-activity") {
+				expect(right.label).toBe("SUB-MOC");
+				expect(right.path).toBe("Journal");
+				expect(right.count).toBe(50);
+			}
+		}
+	});
+
+	it("does not leak a pending divider to the top level before a leaf block", () => {
+		const config = parseDashboard(`
+divider:
+  title: SUB-MOC
+vault-activity:
+  path: Journal
+`);
+		expect(config.blocks).toHaveLength(1);
+		const activity = config.blocks[0];
+		expect(activity.kind).toBe("vault-activity");
+		if (activity.kind === "vault-activity") {
+			expect(activity.label).toBe("SUB-MOC");
+			expect(activity.path).toBe("Journal");
+		}
+	});
+
+	it("nests a leaf block inside an explicit column", () => {
+		const config = parseDashboard(`
+row:
+  columns: 2
+- column:
+  - section:
+      columns: 2
+      cards:
+        - type: big
+          label: Cards
+          path: Cards.md
+- column:
+  - vault-activity:
+      path: Journal/
+      count: 5
+`);
+		expect(config.blocks).toHaveLength(1);
+		const row = config.blocks[0];
+		expect(row.kind).toBe("row");
+		if (row.kind === "row") {
+			expect(row.children).toHaveLength(2);
+			const [col1, col2] = row.children;
+			expect(col1.kind).toBe("column");
+			expect(col2.kind).toBe("column");
+			if (col1.kind === "column" && col2.kind === "column") {
+				expect(col1.children).toHaveLength(1);
+				expect(col1.children[0].kind).toBe("section");
+				expect(col2.children).toHaveLength(1);
+				const activity = col2.children[0];
+				expect(activity.kind).toBe("vault-activity");
+				if (activity.kind === "vault-activity") {
+					expect(activity.path).toBe("Journal/");
+					expect(activity.count).toBe(5);
+				}
+			}
+		}
+	});
+
+	it("nests heatmap and timeline inside a column", () => {
+		const config = parseDashboard(`
+column:
+  - heatmap:
+      weeks: 12
+  - timeline:
+      count: 8
+`);
+		expect(config.blocks).toHaveLength(1);
+		const column = config.blocks[0];
+		expect(column.kind).toBe("column");
+		if (column.kind === "column") {
+			expect(column.children).toHaveLength(2);
+			const [heatmap, timeline] = column.children;
+			expect(heatmap.kind).toBe("heatmap");
+			if (heatmap.kind === "heatmap") {
+				expect(heatmap.weeks).toBe(12);
+			}
+			expect(timeline.kind).toBe("timeline");
+			if (timeline.kind === "timeline") {
+				expect(timeline.count).toBe(8);
+			}
+		}
+	});
+
+	it("keeps standalone leaf blocks at the top level", () => {
+		const config = parseDashboard(`
+vault-activity:
+  path: Journal/
+  count: 10
+`);
+		expect(config.blocks).toHaveLength(1);
+		const block = config.blocks[0];
+		expect(block.kind).toBe("vault-activity");
 	});
 
 	it("auto-appends .md to card paths", () => {

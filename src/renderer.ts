@@ -6,6 +6,7 @@ import { renderFiglet, getFontByName } from "./figlet";
 import { parseDashboard, buildDefaultConfig } from "./parser";
 import { safeParseInt, splitCsv } from "./utils";
 import { buildTimelineEvents } from "./timeline";
+import { computeStatValue, collectFileTags, dateStamp, statSummary, type StatFile } from "./stats";
 import {
 	DashboardConfig,
 	DashboardBlock,
@@ -27,7 +28,14 @@ import {
 	TaskSummaryConfig,
 	ObsidianBookmarkItem,
 	ActivityEvent,
+	StatsConfig,
+	NewNoteConfig,
 } from "./types";
+
+/** Inline plus icon used by the "+ New Note" button. */
+const SVG = {
+	plus: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`,
+};
 
 /** Terminal-style labels + glyphs for each timeline action. */
 const TIMELINE_ACTIONS: Record<string, { label: string; glyph: string }> = {
@@ -116,10 +124,10 @@ export class NexusRenderer extends MarkdownRenderChild {
 			const nodes = this.containerEl.querySelectorAll<HTMLElement>(
 				".nexus-timeline-time[data-relative='1']",
 			);
-			for (const el of nodes) {
+			nodes.forEach((el) => {
 				const ts = Number(el.dataset.ts);
 				if (Number.isFinite(ts)) el.textContent = this.formatRelativeTime(ts);
-			}
+			});
 		}, 60_000);
 	}
 
@@ -165,7 +173,11 @@ export class NexusRenderer extends MarkdownRenderChild {
 		}
 
 		// ── Stats bar ─────────────────────────────────────
-		if (!placed.has("stats") && config.stats.enabled && config.stats.items.length > 0) {
+		if (
+			!placed.has("stats") &&
+			config.stats.enabled &&
+			(config.stats.items.length > 0 || config.stats.newNote?.enabled)
+		) {
 			this.renderStatsBar(containerEl, config.stats);
 		}
 
@@ -262,7 +274,12 @@ export class NexusRenderer extends MarkdownRenderChild {
 
 		// Stats — respect settings toggle when code block doesn't override
 		if (source.includes("stats:")) {
-			merged.stats = { ...base.stats, enabled: override.stats.enabled };
+			merged.stats = {
+				...base.stats,
+				enabled: override.stats.enabled,
+				items: override.stats.items.length > 0 ? override.stats.items : base.stats.items,
+				newNote: override.stats.newNote ?? base.stats.newNote,
+			};
 		} else {
 			merged.stats = { ...base.stats, enabled: false };
 		}
@@ -321,14 +338,23 @@ export class NexusRenderer extends MarkdownRenderChild {
 			items: (opts.stats || []).map((s) => ({
 				label: s.label,
 				folder: s.folder,
+				metric: s.metric,
+				scope: s.scope,
+				recursive: s.recursive,
 			})),
+			newNote: {
+				enabled: opts.statsNewNote?.enabled ?? false,
+				label: opts.statsNewNote?.label || "+ New Note",
+				folder: opts.statsNewNote?.folder || "",
+				template: opts.statsNewNote?.template || "",
+			},
 		};
 
 		if (opts.showSearch) {
 			config.search = { show: true, default: opts.searchDefault || "vault" };
 		}
 
-		config.graph = { enabled: opts.showGraph, exclude: opts.excludeFolders || [] };
+		config.graph = { enabled: opts.showGraph, exclude: [] };
 
 		// Track which slot types are placed in layouts
 		const placed = new Set<ContentSlotType>();
@@ -362,13 +388,14 @@ export class NexusRenderer extends MarkdownRenderChild {
 				case "quick-links": {
 					if (!opts.showQuickLinks) return null;
 
-					const manualItems = opts.quickLinks?.length > 0
-						? opts.quickLinks.map((link) => ({
-							url: link.url,
-							label: link.label,
-							icon: link.icon,
-						}))
-						: [];
+					const manualItems =
+						opts.quickLinks?.length > 0
+							? opts.quickLinks.map((link) => ({
+									url: link.url,
+									label: link.label,
+									icon: link.icon,
+								}))
+							: [];
 
 					const bookmarkBlock = opts.showBookmarksAsLinks ? this.buildBookmarkLinks() : null;
 					const hasBookmarks = bookmarkBlock && bookmarkBlock.items.length > 0;
@@ -381,14 +408,13 @@ export class NexusRenderer extends MarkdownRenderChild {
 					if (manualItems.length > 0) {
 						children.push({
 							kind: "links",
-							title: opts.showQuickLinksDivider ? opts.quickLinksDividerLabel || "Quick Links" : undefined,
 							columns: 1,
 							items: manualItems,
 						} as LinksConfig);
 					}
 
-					if (hasBookmarks) {
-						children.push(bookmarkBlock!);
+					if (bookmarkBlock && bookmarkBlock.items.length > 0) {
+						children.push(bookmarkBlock);
 					}
 
 					if (children.length === 1) return children[0];
@@ -411,10 +437,8 @@ export class NexusRenderer extends MarkdownRenderChild {
 								show: true,
 								count: vlEntry.count || opts.vaultActivityCount,
 								path: vlEntry.path || undefined,
-							tags: vlEntry.tags
-								? splitCsv(vlEntry.tags)
-								: undefined,
-								label: vlEntry.label || undefined,
+								tags: vlEntry.tags ? splitCsv(vlEntry.tags) : undefined,
+								label: opts.showVaultActivityDivider ? vlEntry.label || undefined : undefined,
 							} as VaultActivityConfig;
 						}
 					}
@@ -425,7 +449,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 						kind: "vault-activity",
 						show: true,
 						count: opts.vaultActivityCount,
-						label: opts.vaultActivityLabel || undefined,
+						label: opts.showVaultActivityDivider ? opts.vaultActivityLabel || undefined : undefined,
 					} as VaultActivityConfig;
 				}
 				case "divider":
@@ -458,7 +482,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 						kind: "heatmap",
 						show: true,
 						weeks: opts.heatmapWeeks,
-						label: opts.heatmapLabel,
+						label: opts.showHeatmapDivider ? opts.heatmapLabel : undefined,
 					} as HeatmapConfig;
 				case "timeline":
 					if (!opts.showActivityTimeline) return null;
@@ -467,7 +491,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 						kind: "timeline",
 						show: true,
 						count: opts.activityTimelineCount,
-						label: opts.activityTimelineLabel,
+						label: opts.showActivityTimelineDivider ? opts.activityTimelineLabel : undefined,
 					} as TimelineConfig;
 				case "clock":
 					if (!opts.showClock) return null;
@@ -479,31 +503,31 @@ export class NexusRenderer extends MarkdownRenderChild {
 						showDate: opts.clockShowDate,
 						showSeconds: opts.clockShowSeconds,
 						format: opts.clockFormat,
-						label: opts.clockLabel,
+						label: opts.showClockDivider ? opts.clockLabel : undefined,
 					} as ClockConfig;
-			case "filetypes":
-				if (!opts.showFileTypeChart) return null;
-				placed.add("filetypes");
-				return {
-					kind: "filetypes",
-					show: true,
-					max: opts.fileTypeChartMax,
-					label: opts.fileTypeChartLabel,
-				} as FileTypeChartConfig;
-			case "tasks":
-				if (!opts.showTaskSummary) return null;
-				placed.add("tasks");
-				return {
-					kind: "tasks",
-					show: true,
-					showProgress: opts.taskSummaryShowProgress,
-					showList: opts.taskSummaryShowList,
-					count: opts.taskSummaryCount,
-					path: opts.taskSummaryPath,
-					tags: opts.taskSummaryTags ? splitCsv(opts.taskSummaryTags) : undefined,
-					label: opts.taskSummaryLabel,
-				} as TaskSummaryConfig;
-			default:
+				case "filetypes":
+					if (!opts.showFileTypeChart) return null;
+					placed.add("filetypes");
+					return {
+						kind: "filetypes",
+						show: true,
+						max: opts.fileTypeChartMax,
+						label: opts.showFileTypeChartDivider ? opts.fileTypeChartLabel : undefined,
+					} as FileTypeChartConfig;
+				case "tasks":
+					if (!opts.showTaskSummary) return null;
+					placed.add("tasks");
+					return {
+						kind: "tasks",
+						show: true,
+						showProgress: opts.taskSummaryShowProgress,
+						showList: opts.taskSummaryShowList,
+						count: opts.taskSummaryCount,
+						path: opts.taskSummaryPath,
+						tags: opts.taskSummaryTags ? splitCsv(opts.taskSummaryTags) : undefined,
+						label: opts.showTaskSummaryDivider ? opts.taskSummaryLabel : undefined,
+					} as TaskSummaryConfig;
+				default:
 					return null;
 			}
 		};
@@ -705,13 +729,86 @@ export class NexusRenderer extends MarkdownRenderChild {
 
 	// ── Render: Stats Bar ──────────────────────────────────────
 
-	private renderStatsBar(containerEl: HTMLElement, stats: DashboardConfig["stats"]): void {
+	private renderStatsBar(containerEl: HTMLElement, stats: StatsConfig): void {
 		const bar = containerEl.createDiv({ cls: "nexus-stats" });
+		const now = Date.now();
+
+		// Snapshot the vault once per render (not per stat) so large vaults
+		// don't get scanned N times. Tags are read lazily and memoized per path.
+		const tFiles = this.plugin.app.vault.getFiles();
+		const files: StatFile[] = tFiles.map((f) => ({
+			path: f.path,
+			extension: f.extension,
+			size: f.stat.size,
+			mtime: f.stat.mtime,
+		}));
+		const byPath = new Map(tFiles.map((f) => [f.path, f]));
+		const tagCache = new Map<string, string[]>();
+		const tagsOf = (path: string): string[] => {
+			let cached = tagCache.get(path);
+			if (cached === undefined) {
+				const file = byPath.get(path);
+				cached = file ? collectFileTags(this.plugin.app.metadataCache.getFileCache(file)) : [];
+				tagCache.set(path, cached);
+			}
+			return cached;
+		};
+
 		for (const item of stats.items) {
-			const count = this.countFiles(item.folder);
-			const card = bar.createEl("div", { cls: "nexus-stat-card" });
-			card.createEl("span", { text: String(count), cls: "nexus-stat-num" });
+			const value = computeStatValue(files, item, now, tagsOf);
+			const card = bar.createEl("div", {
+				cls: "nexus-stat-card",
+				attr: { title: statSummary(item) },
+			});
+			card.createEl("span", { text: value, cls: "nexus-stat-num" });
 			card.createEl("span", { text: item.label, cls: "nexus-stat-label" });
+		}
+		if (stats.newNote?.enabled) {
+			this.renderNewNoteButton(bar, stats.newNote);
+		}
+	}
+
+	private renderNewNoteButton(bar: HTMLElement, config: NewNoteConfig): void {
+		const btn = bar.createEl("button", {
+			cls: "nexus-stat-new-note",
+			attr: { type: "button", "aria-label": "Create a new note" },
+		});
+		btn.innerHTML = SVG.plus;
+		btn.createSpan({ text: config.label || "+ New Note", cls: "nexus-stat-new-note-label" });
+		btn.addEventListener("click", () => void this.createNewNote(config));
+	}
+
+	private async createNewNote(config: NewNoteConfig): Promise<void> {
+		const app = this.plugin.app;
+		try {
+			const folder = (config.folder || "").replace(/^\/+|\/+$/g, "");
+			const fileName = `${dateStamp(new Date())}.md`;
+			const targetPath = folder ? `${folder}/${fileName}` : fileName;
+
+			const existing = app.vault.getAbstractFileByPath(targetPath);
+			if (existing instanceof TFile) {
+				await app.workspace.getLeaf("tab").openFile(existing);
+				return;
+			}
+
+			if (folder && !app.vault.getAbstractFileByPath(folder)) {
+				await app.vault.createFolder(folder);
+			}
+
+			let content = "";
+			if (config.template) {
+				const template = app.vault.getAbstractFileByPath(config.template);
+				if (template instanceof TFile) {
+					content = await app.vault.read(template);
+				}
+			}
+
+			const file = await app.vault.create(targetPath, content);
+			await app.workspace.getLeaf("tab").openFile(file);
+		} catch (err) {
+			// eslint-disable-next-line no-console
+			console.error("[NEXUS] Failed to create new note:", err);
+			new Notice("Nexus Dashboard: failed to create note");
 		}
 	}
 
@@ -787,7 +884,18 @@ export class NexusRenderer extends MarkdownRenderChild {
 			pill.href = item.url;
 			pill.target = "_blank";
 			pill.rel = "noopener";
-			pill.textContent = item.label || item.url;
+
+			if (item.icon) {
+				const iconSvg = SMALL_ICONS[item.icon];
+				const iconEl = iconSvg
+					? pill.createDiv({ cls: "nexus-link-pill-icon" })
+					: /\p{Emoji}/u.test(item.icon)
+						? pill.createEl("span", { cls: "nexus-link-pill-icon" })
+						: null;
+				if (iconEl) iconEl.innerHTML = iconSvg || item.icon;
+			}
+
+			pill.createEl("span", { text: item.label || item.url, cls: "nexus-link-pill-label" });
 		}
 	}
 
@@ -809,8 +917,10 @@ export class NexusRenderer extends MarkdownRenderChild {
 	}
 
 	/** Convert an ObsidianBookmarkItem to a LinkItem (or null if unsupported). */
-	private bookmarkToLinkItem(bookmark: ObsidianBookmarkItem): { url: string; label: string; icon: string } | null {
-		const vaultName = encodeURIComponent((this.plugin.app.vault as any).getName?.() || "");
+	private bookmarkToLinkItem(
+		bookmark: ObsidianBookmarkItem,
+	): { url: string; label: string; icon: string } | null {
+		const vaultName = encodeURIComponent(this.plugin.app.vault.getName() || "");
 		switch (bookmark.type) {
 			case "file":
 			case "heading":
@@ -820,7 +930,11 @@ export class NexusRenderer extends MarkdownRenderChild {
 				if (bookmark.subpath) {
 					url += encodeURIComponent(bookmark.subpath);
 				}
-				const name = bookmark.path.split("/").pop()?.replace(/\.[^/.]+$/, "") || bookmark.title;
+				const name =
+					bookmark.path
+						.split("/")
+						.pop()
+						?.replace(/\.[^/.]+$/, "") || bookmark.title;
 				return { url, label: name, icon: "File" };
 			}
 			case "folder": {
@@ -849,7 +963,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 	 */
 	private buildBookmarkLinks(): LinksConfig | null {
 		try {
-			const internalPlugins = (this.plugin.app as any).internalPlugins;
+			const internalPlugins = this.plugin.app.internalPlugins;
 			if (!internalPlugins) return null;
 
 			const bookmarkPlugin = internalPlugins.plugins?.["bookmarks"];
@@ -858,10 +972,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 			const instance = bookmarkPlugin.instance;
 			if (!instance) return null;
 
-			const items: ObsidianBookmarkItem[] =
-				(typeof instance.getBookmarks === "function" ? instance.getBookmarks() : undefined) ??
-				(instance.data?.items as ObsidianBookmarkItem[] | undefined) ??
-				[];
+			const items: ObsidianBookmarkItem[] = instance.getBookmarks?.() ?? instance.data?.items ?? [];
 			if (!items || items.length === 0) return null;
 
 			const flat = this.flattenBookmarks(items);
@@ -1140,9 +1251,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 		config: { path?: string; tags?: string[]; count?: number },
 		defaultCount: number,
 	): TFile[] {
-		const opts = this.plugin.settings;
 		const count = config.count ?? defaultCount;
-		const exclude = opts.excludeFolders || [];
 
 		let files = this.plugin.app.vault.getMarkdownFiles();
 
@@ -1173,11 +1282,6 @@ export class NexusRenderer extends MarkdownRenderChild {
 			});
 		}
 
-		files = files.filter((f) => {
-			const firstFolder = f.path.split("/")[0];
-			return !exclude.includes(firstFolder);
-		});
-
 		return files.sort((a, b) => b.stat.mtime - a.stat.mtime).slice(0, count);
 	}
 
@@ -1195,7 +1299,8 @@ export class NexusRenderer extends MarkdownRenderChild {
 		const wrapperEl = containerEl.createDiv({ cls: "nexus-section" });
 
 		// Determine label (empty label hides the header divider)
-		const label = config.label || opts.vaultActivityLabel || "";
+		const label =
+			config.label || (opts.showVaultActivityDivider ? opts.vaultActivityLabel || "" : "");
 		if (label) this.renderDivider(wrapperEl, label);
 
 		// Compact file list
@@ -1242,11 +1347,10 @@ export class NexusRenderer extends MarkdownRenderChild {
 
 	private renderHeatmap(containerEl: HTMLElement, config: HeatmapConfig): void {
 		const weeks = config.weeks || 20;
-		const label = config.label || "CONTRIBUTION ACTIVITY";
+		const label =
+			config.label || (this.plugin.settings.showHeatmapDivider ? "CONTRIBUTION ACTIVITY" : "");
 		const now = new Date();
 		const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-		const opts = this.plugin.settings;
-		const exclude = opts.excludeFolders || [];
 
 		// Calculate start date (beginning of week, going back N weeks)
 		const startDate = new Date(today);
@@ -1264,9 +1368,6 @@ export class NexusRenderer extends MarkdownRenderChild {
 		const files = this.plugin.app.vault.getMarkdownFiles();
 		for (const file of files) {
 			if (loggedPaths.has(file.path)) continue;
-			// Skip excluded folders
-			const firstFolder = file.path.split("/")[0];
-			if (exclude.includes(firstFolder)) continue;
 
 			// Use ctime (created) or mtime — prefer mtime for activity
 			const d = new Date(file.stat.mtime);
@@ -1399,7 +1500,9 @@ export class NexusRenderer extends MarkdownRenderChild {
 
 	private renderTimeline(containerEl: HTMLElement, config: TimelineConfig): void {
 		const opts = this.plugin.settings;
-		const label = config.label || opts.activityTimelineLabel || "ACTIVITY";
+		const label =
+			config.label ||
+			(opts.showActivityTimelineDivider ? opts.activityTimelineLabel || "ACTIVITY" : "");
 		const baseCount = config.count || opts.activityTimelineCount || 20;
 		const state: { base: number; displayed: number; filter: string | null } = {
 			base: baseCount,
@@ -1484,7 +1587,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 			config.include && config.include.length > 0
 				? config.include
 				: splitCsv(opts.activityTimelineIncludeFolders || "");
-		const excludeFolders = config.exclude || opts.excludeFolders || [];
+		const excludeFolders = config.exclude || [];
 		const excludeExt = config.excludeExt || [];
 		const types = config.types || [];
 		const count = config.count || opts.activityTimelineCount || 20;
@@ -1504,7 +1607,11 @@ export class NexusRenderer extends MarkdownRenderChild {
 		);
 	}
 
-	private renderTimelineByDay(listEl: HTMLElement, events: ActivityEvent[], config: TimelineConfig): void {
+	private renderTimelineByDay(
+		listEl: HTMLElement,
+		events: ActivityEvent[],
+		config: TimelineConfig,
+	): void {
 		const opts = this.plugin.settings;
 		const showDate = config.showDate ?? opts.activityTimelineShowDate;
 		let lastKey: string | null = null;
@@ -1520,7 +1627,11 @@ export class NexusRenderer extends MarkdownRenderChild {
 		}
 	}
 
-	private renderTimelineByFile(listEl: HTMLElement, events: ActivityEvent[], config: TimelineConfig): void {
+	private renderTimelineByFile(
+		listEl: HTMLElement,
+		events: ActivityEvent[],
+		config: TimelineConfig,
+	): void {
 		const counts = new Map<string, number>();
 		for (const ev of events) {
 			counts.set(ev.path, (counts.get(ev.path) || 0) + 1);
@@ -1561,7 +1672,10 @@ export class NexusRenderer extends MarkdownRenderChild {
 		actionEl.appendText(" " + meta.label);
 
 		const pathEl = row.createEl("span", { cls: "nexus-timeline-path" });
-		if (event.oldPath && (event.action === "moved" || event.action === "renamed" || event.action === "folder-renamed")) {
+		if (
+			event.oldPath &&
+			(event.action === "moved" || event.action === "renamed" || event.action === "folder-renamed")
+		) {
 			pathEl.createEl("span", { text: event.oldPath, cls: "nexus-timeline-path-old" });
 			pathEl.appendText(" → ");
 			pathEl.appendText(event.path);
@@ -1698,7 +1812,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 
 	private renderFileTypeChart(containerEl: HTMLElement, config: FileTypeChartConfig): void {
 		const max = config.max || 8;
-		const label = config.label || "FILE TYPES";
+		const label = config.label || (this.plugin.settings.showFileTypeChartDivider ? "FILE TYPES" : "");
 
 		// Count by extension
 		const extCounts = new Map<string, number>();
@@ -1745,8 +1859,11 @@ export class NexusRenderer extends MarkdownRenderChild {
 
 	// ── Render: Task Summary ─────────────────────────────────
 
-	private async renderTaskSummary(containerEl: HTMLElement, config: TaskSummaryConfig): Promise<void> {
-		const label = config.label || "TASKS";
+	private async renderTaskSummary(
+		containerEl: HTMLElement,
+		config: TaskSummaryConfig,
+	): Promise<void> {
+		const label = config.label || (this.plugin.settings.showTaskSummaryDivider ? "TASKS" : "");
 		const showProgress = config.showProgress !== false;
 		const showList = config.showList !== false;
 		const maxList = config.count || 10;
@@ -1851,11 +1968,11 @@ export class NexusRenderer extends MarkdownRenderChild {
 			const grouped = new Map<string, { file: TFile; tasks: typeof openTasks }>();
 			for (const task of openTasks) {
 				const key = task.file.path;
-			if (!grouped.has(key)) {
-				grouped.set(key, { file: task.file, tasks: [] });
-			}
-			const group = grouped.get(key);
-			if (group) group.tasks.push(task);
+				if (!grouped.has(key)) {
+					grouped.set(key, { file: task.file, tasks: [] });
+				}
+				const group = grouped.get(key);
+				if (group) group.tasks.push(task);
 			}
 
 			const listEl = taskEl.createDiv({
@@ -1873,7 +1990,10 @@ export class NexusRenderer extends MarkdownRenderChild {
 				const headerEl = groupEl.createDiv({ cls: "nexus-tasks-group-header" });
 				const age = this.getRelativeTime(group.file.stat.mtime);
 				headerEl.createEl("span", { text: group.file.basename, cls: "nexus-tasks-group-name" });
-				headerEl.createEl("span", { text: `${group.tasks.length} task${group.tasks.length > 1 ? "s" : ""}`, cls: "nexus-tasks-group-count" });
+				headerEl.createEl("span", {
+					text: `${group.tasks.length} task${group.tasks.length > 1 ? "s" : ""}`,
+					cls: "nexus-tasks-group-count",
+				});
 				headerEl.createEl("span", { text: age, cls: "nexus-tasks-group-time" });
 				headerEl.addEventListener("click", (e) => {
 					e.preventDefault();
@@ -1893,7 +2013,7 @@ export class NexusRenderer extends MarkdownRenderChild {
 					itemEl.addEventListener("click", (e) => {
 						e.preventDefault();
 						this.plugin.app.workspace.openLinkText(task.file.path, "", false, {
-							line: task.line,
+							state: { line: task.line },
 						});
 					});
 				}
@@ -2211,13 +2331,4 @@ export class NexusRenderer extends MarkdownRenderChild {
 	}
 
 	// ── Shared helpers ─────────────────────────────────────────
-
-	private countFiles(folderPath: string): number {
-		if (!folderPath) {
-			return this.plugin.app.vault.getFiles().length;
-		}
-		const files = this.plugin.app.vault.getFiles();
-		return files.filter((file) => file.path.toLowerCase().startsWith(folderPath.toLowerCase() + "/"))
-			.length;
-	}
 }

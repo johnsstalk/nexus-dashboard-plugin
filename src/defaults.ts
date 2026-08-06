@@ -1,18 +1,43 @@
-import type {
-	NexusSettings,
-	MocEntry,
-	StatEntry,
-	DividerDesign,
-} from "./types";
+import type { NexusSettings, MocEntry, StatEntry, DividerDesign, NewNoteSettings } from "./types";
 
 /** Default Map of Content entries shown on the dashboard when no user config exists. */
 export const DEFAULT_MOCS: MocEntry[] = [
-	{ path: "MOC/Journal MOC.md", title: "Journal MOC", desc: "Personal reflections & daily logs", icon: "Journal" },
-	{ path: "MOC/Knowledge MOC.md", title: "Knowledge MOC", desc: "Learning notes & insights", icon: "Knowledge" },
-	{ path: "MOC/Personal MOC.md", title: "Personal MOC", desc: "Goals, habits & self-tracking", icon: "Personal" },
-	{ path: "MOC/Projects MOC.md", title: "Projects MOC", desc: "Active work & side quests", icon: "Project" },
-	{ path: "MOC/Resources MOC.md", title: "Resources MOC", desc: "Tools, references & bookmarks", icon: "Resources" },
-	{ path: "MOC/Tracker Index MOC.md", title: "Tracker Index MOC", desc: "Metrics, streaks & analytics", icon: "Trackers" },
+	{
+		path: "MOC/Journal MOC.md",
+		title: "Journal MOC",
+		desc: "Personal reflections & daily logs",
+		icon: "Journal",
+	},
+	{
+		path: "MOC/Knowledge MOC.md",
+		title: "Knowledge MOC",
+		desc: "Learning notes & insights",
+		icon: "Knowledge",
+	},
+	{
+		path: "MOC/Personal MOC.md",
+		title: "Personal MOC",
+		desc: "Goals, habits & self-tracking",
+		icon: "Personal",
+	},
+	{
+		path: "MOC/Projects MOC.md",
+		title: "Projects MOC",
+		desc: "Active work & side quests",
+		icon: "Project",
+	},
+	{
+		path: "MOC/Resources MOC.md",
+		title: "Resources MOC",
+		desc: "Tools, references & bookmarks",
+		icon: "Resources",
+	},
+	{
+		path: "MOC/Tracker Index MOC.md",
+		title: "Tracker Index MOC",
+		desc: "Metrics, streaks & analytics",
+		icon: "Trackers",
+	},
 ];
 
 /** Default vault folder stat counters displayed in the dashboard header. */
@@ -23,6 +48,14 @@ export const DEFAULT_STATS: StatEntry[] = [
 	{ folder: "Knowledge/Tasks & Action Management", label: "Tasks" },
 	{ folder: "Journal", label: "Journals" },
 ];
+
+/** Default configuration for the "+ New Note" button in the stats bar. */
+export const DEFAULT_NEW_NOTE: NewNoteSettings = {
+	enabled: false,
+	label: "+ New Note",
+	folder: "",
+	template: "",
+};
 
 /** Default styling for dashboard section dividers (gradient line + label appearance). */
 export const DEFAULT_DIVIDER_DESIGN: DividerDesign = {
@@ -44,11 +77,10 @@ export const DEFAULT_SETTINGS: NexusSettings = {
 	openOnStartup: false,
 	mocs: DEFAULT_MOCS,
 	stats: DEFAULT_STATS,
+	statsNewNote: { ...DEFAULT_NEW_NOTE },
 	showStats: true,
 	showGraph: false,
-	excludeFolders: [],
 	mocGridColumns: 2,
-	miniGridColumns: 3,
 	dividerDesign: { ...DEFAULT_DIVIDER_DESIGN },
 	asciiDefaultFont: "ANSI Shadow",
 	asciiDefaultColor: "#8A5CF6",
@@ -60,10 +92,9 @@ export const DEFAULT_SETTINGS: NexusSettings = {
 	quickLinks: [],
 	vaultLists: [],
 	rowSizes: {},
+	collapseState: {},
 	rowLayouts: [],
 	columnLayouts: [],
-	showQuickLinksDivider: false,
-	quickLinksDividerLabel: "Quick Links",
 	showHeader: true,
 	showMocCards: true,
 	showMocDivider: false,
@@ -71,21 +102,26 @@ export const DEFAULT_SETTINGS: NexusSettings = {
 	showQuickLinks: false,
 	showBookmarksAsLinks: false,
 	showHeatmap: true,
+	showHeatmapDivider: true,
 	heatmapWeeks: 10,
 	heatmapLabel: "CONTRIBUTION ACTIVITY",
 	showActivityTimeline: false,
+	showActivityTimelineDivider: true,
 	activityTimelineCount: 20,
 	activityTimelineLabel: "ACTIVITY",
 	showClock: false,
+	showClockDivider: false,
 	clockTimezone: "",
 	clockShowDate: true,
 	clockShowSeconds: false,
 	clockFormat: "12h",
 	clockLabel: "",
 	showFileTypeChart: false,
+	showFileTypeChartDivider: true,
 	fileTypeChartMax: 8,
 	fileTypeChartLabel: "FILE TYPES",
 	showVaultActivity: true,
+	showVaultActivityDivider: true,
 	vaultActivityCount: 15,
 	vaultActivityLabel: "VAULT ACTIVITY",
 	vaultActivityShowFade: true,
@@ -106,6 +142,7 @@ export const DEFAULT_SETTINGS: NexusSettings = {
 	taskSummaryShowFade: true,
 	taskSummaryMaxHeight: 320,
 	showTaskSummary: true,
+	showTaskSummaryDivider: true,
 	taskSummaryShowProgress: true,
 	taskSummaryShowList: true,
 	taskSummaryPath: "Knowledge/Tasks & Action Management",
@@ -131,10 +168,12 @@ export function deepCloneDefaults(): NexusSettings {
 		...DEFAULT_SETTINGS,
 		mocs: DEFAULT_MOCS.map((m) => ({ ...m })),
 		stats: DEFAULT_STATS.map((s) => ({ ...s })),
+		statsNewNote: { ...DEFAULT_NEW_NOTE },
 		dividerDesign: { ...DEFAULT_SETTINGS.dividerDesign },
 		quickLinks: DEFAULT_SETTINGS.quickLinks.map((l) => ({ ...l })),
 		vaultLists: DEFAULT_SETTINGS.vaultLists.map((v) => ({ ...v })),
 		rowSizes: { ...DEFAULT_SETTINGS.rowSizes },
+		collapseState: { ...DEFAULT_SETTINGS.collapseState },
 		rowLayouts: DEFAULT_SETTINGS.rowLayouts.map((r) => ({ ...r, slots: [...r.slots] })),
 		columnLayouts: DEFAULT_SETTINGS.columnLayouts.map((s) => ({ ...s, slots: [...s.slots] })),
 		activityLog: DEFAULT_SETTINGS.activityLog.map((e) => ({ ...e })),
@@ -143,33 +182,27 @@ export function deepCloneDefaults(): NexusSettings {
 
 /**
  * Merges partially-loaded data over a deep-cloned default, preserving
- * type safety for arrays, objects, and the csv-to-array migration path
- * for `excludeFolders`.
+ * type safety for arrays and objects.
  *
  * This is the centralised replacement for the 170-line `loadSettings()`
  * manual-block pattern — every new setting field is handled automatically
  * without adding another 3-line typeof-check block.
  *
  * @param data - Raw data from `plugin.loadData()` (may be `null`/`undefined`).
- * @param splitCsv - Optional CSV parser used when `excludeFolders` is still a
- *   comma-separated string (legacy migration path).
  * @returns A fully-populated {@link NexusSettings} safe to mutate.
  */
-export function mergeSettings(
-	data: Partial<NexusSettings> | null | undefined,
-	splitCsv?: (val: string) => string[],
-): NexusSettings {
+export function mergeSettings(data: Partial<NexusSettings> | null | undefined): NexusSettings {
 	if (!data) return deepCloneDefaults();
 
 	return {
 		...deepCloneDefaults(),
 		...data,
-		mocs: Array.isArray(data.mocs)
-			? data.mocs.map((m) => ({ ...m }))
-			: deepCloneDefaults().mocs,
-		stats: Array.isArray(data.stats)
-			? data.stats.map((s) => ({ ...s }))
-			: deepCloneDefaults().stats,
+		mocs: Array.isArray(data.mocs) ? data.mocs.map((m) => ({ ...m })) : deepCloneDefaults().mocs,
+		stats: Array.isArray(data.stats) ? data.stats.map((s) => ({ ...s })) : deepCloneDefaults().stats,
+		statsNewNote:
+			data.statsNewNote && typeof data.statsNewNote === "object"
+				? { ...deepCloneDefaults().statsNewNote, ...data.statsNewNote }
+				: deepCloneDefaults().statsNewNote,
 		quickLinks: Array.isArray(data.quickLinks)
 			? data.quickLinks.map((l) => ({ ...l }))
 			: deepCloneDefaults().quickLinks,
@@ -182,7 +215,6 @@ export function mergeSettings(
 		columnLayouts: Array.isArray(data.columnLayouts)
 			? data.columnLayouts.map((s) => ({ ...s, slots: s.slots ? [...s.slots] : [] }))
 			: deepCloneDefaults().columnLayouts,
-		excludeFolders: _resolveExcludeFolders(data, splitCsv),
 		activityLog: Array.isArray(data.activityLog)
 			? data.activityLog.map((e) => ({ ...e }))
 			: deepCloneDefaults().activityLog,
@@ -190,20 +222,10 @@ export function mergeSettings(
 			data.dividerDesign && typeof data.dividerDesign === "object"
 				? { ...deepCloneDefaults().dividerDesign, ...data.dividerDesign }
 				: deepCloneDefaults().dividerDesign,
-		rowSizes:
-			data.rowSizes && typeof data.rowSizes === "object"
-				? { ...data.rowSizes }
-				: {},
+		rowSizes: data.rowSizes && typeof data.rowSizes === "object" ? { ...data.rowSizes } : {},
+		collapseState:
+			data.collapseState && typeof data.collapseState === "object" ? { ...data.collapseState } : {},
 	};
-}
-
-function _resolveExcludeFolders(
-	data: Partial<NexusSettings>,
-	splitCsv?: (val: string) => string[],
-): string[] {
-	if (Array.isArray(data.excludeFolders)) return [...data.excludeFolders];
-	if (typeof data.excludeFolders === "string" && splitCsv) return splitCsv(data.excludeFolders);
-	return [];
 }
 
 /** Named divider style presets that users can select from the settings UI. */
@@ -226,7 +248,8 @@ export const DIVIDER_PRESETS: Record<string, DividerDesign> = {
 		labelSpacing: "0.08em",
 	},
 	gradient: {
-		gradient: "linear-gradient(90deg, var(--interactive-accent), var(--background-modifier-border), var(--interactive-accent))",
+		gradient:
+			"linear-gradient(90deg, var(--interactive-accent), var(--background-modifier-border), var(--interactive-accent))",
 		lineWidth: "1px",
 		labelSize: "0.7rem",
 		labelWeight: "600",
@@ -234,7 +257,8 @@ export const DIVIDER_PRESETS: Record<string, DividerDesign> = {
 		labelSpacing: "0.12em",
 	},
 	dashed: {
-		gradient: "repeating-linear-gradient(90deg, var(--background-modifier-border), var(--background-modifier-border) 4px, transparent 4px, transparent 8px)",
+		gradient:
+			"repeating-linear-gradient(90deg, var(--background-modifier-border), var(--background-modifier-border) 4px, transparent 4px, transparent 8px)",
 		lineWidth: "1px",
 		labelSize: "0.7rem",
 		labelWeight: "600",
@@ -257,12 +281,12 @@ export const DIVIDER_PRESET_NAMES: Record<string, string> = {
  * named preset it corresponds to.
  *
  * @param d - The divider design to match.
- * @returns The preset key (e.g. `"bold"`, `"subtle"`), or `"default"` if no
- *   preset matches.
+ * @returns The preset key (e.g. `"bold"`, `"subtle"`), or `"custom"` when the
+ *   design matches no known preset.
  * @example
  * ```ts
  * detectDividerPreset(DIVIDER_PRESETS.bold); // "bold"
- * detectDividerPreset({ ...DEFAULT_DIVIDER_DESIGN, lineWidth: "3px" }); // "default"
+ * detectDividerPreset({ ...DEFAULT_DIVIDER_DESIGN, lineWidth: "3px" }); // "custom"
  * ```
  */
 export function detectDividerPreset(d: DividerDesign): string {
@@ -278,5 +302,5 @@ export function detectDividerPreset(d: DividerDesign): string {
 			return key;
 		}
 	}
-	return "default";
+	return "custom";
 }

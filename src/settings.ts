@@ -1,4 +1,16 @@
-import { App, PluginSettingTab, Setting, Notice, setIcon, Modal } from "obsidian";
+import {
+	App,
+	PluginSettingTab,
+	Setting,
+	Notice,
+	setIcon,
+	Modal,
+	ToggleComponent,
+	TextComponent,
+	DropdownComponent,
+	ExtraButtonComponent,
+	copy,
+} from "obsidian";
 import type NexusDashboardPlugin from "./main";
 import type {
 	MocEntry,
@@ -7,6 +19,10 @@ import type {
 	StatEntry,
 	ContentSlotType,
 	VaultListEntry,
+	HeadingConfig,
+	DividerDesign,
+	StatMetric,
+	StatScope,
 } from "./types";
 import { getAvailableFonts, renderFiglet } from "./figlet";
 import { ICONS, SMALL_ICONS } from "./icons";
@@ -18,26 +34,40 @@ import {
 	deepCloneDefaults,
 } from "./defaults";
 import { safeParseInt } from "./utils";
+import { statSummary } from "./stats";
 
 export const ICON_NAMES = Object.keys(ICONS);
 
 export const CONTENT_SLOT_OPTIONS: Record<ContentSlotType, string> = {
-	"none": "Empty",
-	"stats": "Stats",
-	"search": "Search",
-	"heading": "Heading",
+	none: "Empty",
+	stats: "Stats",
+	search: "Search",
+	heading: "Heading",
 	"moc-cards": "MOC Cards",
 	"quick-links": "Quick Links",
 	"vault-activity": "Vault Activity",
-	"divider": "Divider",
-	"heatmap": "Heatmap",
-	"timeline": "Activity Timeline",
-	"clock": "Clock",
-	"filetypes": "File Types",
-	"tasks": "Task Summary",
+	divider: "Divider",
+	heatmap: "Heatmap",
+	timeline: "Activity Timeline",
+	clock: "Clock",
+	filetypes: "File Types",
+	tasks: "Task Summary",
 };
 
+let vaultFoldersCache: string[] | null = null;
+let vaultFoldersCacheAt = 0;
+
+/** Drop the cached vault-folder list (e.g. after a folder rename/move). */
+export function clearVaultFoldersCache(): void {
+	vaultFoldersCache = null;
+	vaultFoldersCacheAt = 0;
+}
+
 function getVaultFolders(app: App): string[] {
+	const now = Date.now();
+	if (vaultFoldersCache && now - vaultFoldersCacheAt < 5000) {
+		return vaultFoldersCache;
+	}
 	const folders = new Set<string>();
 	for (const file of app.vault.getMarkdownFiles()) {
 		const parts = file.path.split("/");
@@ -50,7 +80,9 @@ function getVaultFolders(app: App): string[] {
 			}
 		}
 	}
-	return Array.from(folders).sort();
+	vaultFoldersCache = Array.from(folders).sort();
+	vaultFoldersCacheAt = now;
+	return vaultFoldersCache;
 }
 
 // ── SVG Icons ──────────────────────────────────────────────────
@@ -103,6 +135,14 @@ interface SettingTab {
 	icon: string;
 }
 
+interface DividerControlSettings {
+	show: boolean;
+	label: string;
+	labelPlaceholder: string;
+	onShow: (value: boolean) => Promise<void>;
+	onLabel: (value: string) => Promise<void>;
+}
+
 const SETTING_TABS: SettingTab[] = [
 	{ id: "general", name: "General", icon: "gear" },
 	{ id: "header", name: "Header", icon: "type" },
@@ -114,10 +154,108 @@ export class NexusSettingTab extends PluginSettingTab {
 	plugin: NexusDashboardPlugin;
 	private draggedIndex: number | null = null;
 	private activeTab = "general";
-	private collapsedCards = new Map<number, boolean>();
-	private collapsedRowCards = new Map<number, boolean>();
-	private collapsedColCards = new Map<number, boolean>();
-	private selectedQuickLink = 0;
+
+	/** Namespaced key under which a card's collapsed state is persisted. */
+	private static collapseKey(scope: string, id: string | number): string {
+		return `${scope}:${id}`;
+	}
+
+	/** True when the card (by persisted key) is collapsed; cards default to collapsed. */
+	private isCollapsed(key: string): boolean {
+		return this.plugin.settings.collapseState[key] ?? true;
+	}
+
+	private setCollapsed(key: string, value: boolean): void {
+		this.plugin.settings.collapseState[key] = value;
+	}
+
+	private deleteCollapsed(key: string): void {
+		delete this.plugin.settings.collapseState[key];
+	}
+
+	/** Whether a content slot is available — toggled-off components appear greyed out. */
+	private isSlotEnabled(slot: ContentSlotType): boolean {
+		const s = this.plugin.settings;
+		switch (slot) {
+			case "stats":
+				return s.showStats;
+			case "search":
+				return s.showSearch;
+			case "moc-cards":
+				return s.showMocCards;
+			case "quick-links":
+				return s.showQuickLinks;
+			case "vault-activity":
+				return s.showVaultActivity;
+			case "heatmap":
+				return s.showHeatmap;
+			case "timeline":
+				return s.showActivityTimeline;
+			case "clock":
+				return s.showClock;
+			case "filetypes":
+				return s.showFileTypeChart;
+			case "tasks":
+				return s.showTaskSummary;
+			case "none":
+			case "heading":
+			case "divider":
+				return true;
+		}
+	}
+
+	/** All persisted collapse keys shown on the Components tab. */
+	private collectComponentKeys(): string[] {
+		const keys: string[] = [];
+		for (const id of [
+			"moc-cards",
+			"stats",
+			"search",
+			"vault-activity",
+			"quick-links",
+			"heatmap",
+			"activity-timeline",
+			"clock",
+			"file-types",
+			"task-summary",
+			"divider-style",
+		]) {
+			keys.push(NexusSettingTab.collapseKey("component", id));
+		}
+		for (let i = 0; i < this.plugin.settings.mocs.length; i++) {
+			keys.push(NexusSettingTab.collapseKey("moc", i));
+		}
+		return keys;
+	}
+
+	/** All persisted collapse keys shown on the Dashboard tab. */
+	private collectLayoutKeys(): string[] {
+		const keys: string[] = [];
+		this.plugin.settings.rowLayouts.forEach((l, i) => {
+			keys.push(NexusSettingTab.collapseKey("row", l.id || `row-${i}`));
+		});
+		this.plugin.settings.columnLayouts.forEach((l, i) => {
+			keys.push(NexusSettingTab.collapseKey("col", l.id || String(i)));
+		});
+		return keys;
+	}
+
+	/** Collapse/expand every card in the given key list at once. */
+	private renderCollapseAllBar(parent: HTMLElement, keys: string[]): void {
+		const bar = parent.createDiv({ cls: "nexus-settings-collapse-bar" });
+		const collapseBtn = bar.createEl("button", { text: "Collapse all", cls: "mod-cta" });
+		collapseBtn.addEventListener("click", () => {
+			for (const key of keys) this.setCollapsed(key, true);
+			void this.plugin.saveSettings();
+			this.renderActiveTab();
+		});
+		const expandBtn = bar.createEl("button", { text: "Expand all" });
+		expandBtn.addEventListener("click", () => {
+			for (const key of keys) this.setCollapsed(key, false);
+			void this.plugin.saveSettings();
+			this.renderActiveTab();
+		});
+	}
 
 	constructor(app: App, plugin: NexusDashboardPlugin) {
 		super(app, plugin);
@@ -125,12 +263,43 @@ export class NexusSettingTab extends PluginSettingTab {
 	}
 
 	/**
-	 * Save settings to disk and re-render the settings tab.
-	 * Replaces the repeated `await this.plugin.saveSettings(); this.display();` pattern.
+	 * Save settings to disk and re-render only the active tab content.
+	 * Preserves the title and tab bar DOM (avoids full-page churn on every edit).
 	 */
 	private async saveAndRefresh(): Promise<void> {
 		await this.plugin.saveSettings();
-		this.display();
+		this.renderActiveTab();
+	}
+
+	/** Re-render the currently-active tab content without touching the chrome. */
+	private renderActiveTab(): void {
+		const content = this.containerEl.querySelector<HTMLElement>(".nexus-settings-content");
+		if (!content) return;
+		content.empty();
+		try {
+			switch (this.activeTab) {
+				case "general":
+					this.displayGeneralTab(content);
+					break;
+				case "header":
+					this.displayHeaderTab(content);
+					break;
+				case "layout":
+					this.displayDashboardTab(content);
+					break;
+				case "components":
+					this.displayComponentsTab(content);
+					break;
+			}
+		} catch (err) {
+			// eslint-disable-next-line no-console -- error guard; console is the only place the user can see render failures
+			console.error("Nexus Dashboard: failed to render settings tab", err);
+			new Notice("Nexus Dashboard: failed to render settings tab — see console");
+			content.createEl("p", {
+				text: "An error occurred while rendering this tab. Check the developer console for details.",
+				cls: "setting-item-description",
+			});
+		}
 	}
 
 	display(): void {
@@ -146,35 +315,35 @@ export class NexusSettingTab extends PluginSettingTab {
 
 		// ── Tab bar ──────────────────────────────────────
 		const tabBar = containerEl.createDiv({ cls: "nexus-settings-tabs" });
+		tabBar.setAttribute("role", "tablist");
 		for (const tab of SETTING_TABS) {
+			const isActive = tab.id === this.activeTab;
 			const tabEl = tabBar.createDiv({
-				cls: `nexus-settings-tab ${tab.id === this.activeTab ? "active" : ""}`,
+				cls: `nexus-settings-tab ${isActive ? "active" : ""}`,
+				attr: {
+					role: "tab",
+					"aria-selected": isActive ? "true" : "false",
+					tabindex: isActive ? "0" : "-1",
+				},
 			});
 			setIcon(tabEl, tab.icon);
 			tabEl.createEl("span", { text: tab.name });
-			tabEl.addEventListener("click", () => {
+			const activate = () => {
 				this.activeTab = tab.id;
 				this.display();
+			};
+			tabEl.addEventListener("click", activate);
+			tabEl.addEventListener("keydown", (e) => {
+				if (e.key === "Enter" || e.key === " ") {
+					e.preventDefault();
+					activate();
+				}
 			});
 		}
 
 		// ── Tab content ──────────────────────────────────
-		const content = containerEl.createDiv({ cls: "nexus-settings-content" });
-
-		switch (this.activeTab) {
-			case "general":
-				this.displayGeneralTab(content);
-				break;
-			case "header":
-				this.displayHeaderTab(content);
-				break;
-			case "layout":
-				this.displayDashboardTab(content);
-				break;
-			case "components":
-				this.displayComponentsTab(content);
-				break;
-		}
+		containerEl.createDiv({ cls: "nexus-settings-content" });
+		this.renderActiveTab();
 	}
 
 	// ═══════════════════════════════════════════════════════
@@ -186,12 +355,10 @@ export class NexusSettingTab extends PluginSettingTab {
 			.setName("Open on startup")
 			.setDesc("Automatically open the dashboard when Obsidian starts")
 			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.openOnStartup)
-					.onChange(async (value) => {
-						this.plugin.settings.openOnStartup = value;
-						await this.plugin.saveSettings();
-					})
+				toggle.setValue(this.plugin.settings.openOnStartup).onChange(async (value) => {
+					this.plugin.settings.openOnStartup = value;
+					await this.plugin.saveSettings();
+				}),
 			);
 
 		// ── Export / Import ─────────────────────────────
@@ -204,7 +371,7 @@ export class NexusSettingTab extends PluginSettingTab {
 				btn
 					.setButtonText("Export")
 					.setCta()
-					.onClick(() => this.exportSettings())
+					.onClick(() => this.exportSettings()),
 			);
 
 		new Setting(containerEl)
@@ -214,7 +381,7 @@ export class NexusSettingTab extends PluginSettingTab {
 				btn
 					.setButtonText("Import")
 					.setWarning()
-					.onClick(() => this.importSettings())
+					.onClick(() => this.importSettings()),
 			);
 
 		// ── Reset ──────────────────────────────────────
@@ -235,9 +402,9 @@ export class NexusSettingTab extends PluginSettingTab {
 							async () => {
 								this.plugin.settings = deepCloneDefaults();
 								await this.saveAndRefresh();
-							}
+							},
 						).open();
-					})
+					}),
 			);
 	}
 
@@ -255,12 +422,10 @@ export class NexusSettingTab extends PluginSettingTab {
 			.setName("Show header")
 			.setDesc("Toggle the ASCII art header on the dashboard")
 			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showHeader)
-					.onChange(async (value) => {
-						this.plugin.settings.showHeader = value;
-						await this.plugin.saveSettings();
-					})
+				toggle.setValue(this.plugin.settings.showHeader).onChange(async (value) => {
+					this.plugin.settings.showHeader = value;
+					await this.plugin.saveSettings();
+				}),
 			);
 
 		const fonts = getAvailableFonts();
@@ -276,7 +441,7 @@ export class NexusSettingTab extends PluginSettingTab {
 						this.plugin.settings.headerText = value || "NEXUS";
 						await this.plugin.saveSettings();
 						this.updateAsciiPreview();
-					})
+					}),
 			);
 
 		new Setting(containerEl)
@@ -305,7 +470,7 @@ export class NexusSettingTab extends PluginSettingTab {
 						this.plugin.settings.asciiDefaultColor = value;
 						await this.plugin.saveSettings();
 						this.updateAsciiPreview();
-					})
+					}),
 			);
 
 		new Setting(containerEl)
@@ -350,8 +515,8 @@ export class NexusSettingTab extends PluginSettingTab {
 					this.plugin.settings.asciiDefaultAlign = value as "left" | "center" | "right";
 					await this.plugin.saveSettings();
 					this.updateAsciiPreview();
+				});
 			});
-		});
 
 		// Preview
 		const previewContainer = containerEl.createDiv({ cls: "nexus-settings-preview" });
@@ -364,12 +529,15 @@ export class NexusSettingTab extends PluginSettingTab {
 		heading: HTMLElement,
 		index: number,
 		arr: { splice: (start: number, deleteCount: number, ...items: unknown[]) => unknown[] },
-		collapsedMap: Map<number, boolean>,
+		isCollapsed: boolean,
+		showHandle = true,
 	): { titleWrap: HTMLElement; actions: HTMLElement } {
 		heading.draggable = true;
 
-		const dragHandle = heading.createDiv({ cls: "nexus-settings-moc-drag", text: "⋮⋮" });
-		dragHandle.draggable = false;
+		if (showHandle) {
+			const dragHandle = heading.createDiv({ cls: "nexus-settings-moc-drag", text: "⋮⋮" });
+			dragHandle.draggable = false;
+		}
 
 		heading.addEventListener("dragstart", (e) => {
 			this.draggedIndex = index;
@@ -401,8 +569,9 @@ export class NexusSettingTab extends PluginSettingTab {
 			await this.saveAndRefresh();
 		});
 
-		const isCollapsed = collapsedMap.get(index) ?? true;
-		const arrow = heading.createDiv({ cls: `nexus-settings-moc-arrow ${isCollapsed ? "collapsed" : ""}` });
+		const arrow = heading.createDiv({
+			cls: `nexus-settings-moc-arrow ${isCollapsed ? "collapsed" : ""}`,
+		});
 		arrow.innerHTML = SVG.chevronDown;
 
 		const titleWrap = heading.createDiv({ cls: "nexus-settings-moc-title" });
@@ -468,15 +637,129 @@ export class NexusSettingTab extends PluginSettingTab {
 		input.addEventListener("change", () => onChange(input.value));
 	}
 
+	/** Assign stable ids to row/column layouts that lack one. */
+	private ensureLayoutIds(): void {
+		const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+		for (let i = 0; i < this.plugin.settings.rowLayouts.length; i++) {
+			if (!this.plugin.settings.rowLayouts[i].id) {
+				this.plugin.settings.rowLayouts[i].id = `row-${stamp}-${i}`;
+			}
+		}
+		for (let i = 0; i < this.plugin.settings.columnLayouts.length; i++) {
+			if (!this.plugin.settings.columnLayouts[i].id) {
+				this.plugin.settings.columnLayouts[i].id = `col-${stamp}-${i}`;
+			}
+		}
+	}
+
+	/** Live-update the row preview column widths from a "50/25/25" proportion string. */
+	private updateRowPreviewWidths(previewColEls: HTMLElement[], value: string, cols: number): void {
+		const parts = value.split("/").map((s) => parseInt(s.trim(), 10));
+		for (let i = 0; i < previewColEls.length; i++) {
+			const pct = Number.isFinite(parts[i]) ? parts[i] : 100 / cols;
+			previewColEls[i].style.width = `${Math.min(100, Math.max(0, pct))}%`;
+		}
+	}
+
+	/** Drop out-of-range or malformed per-slot override keys after an import. */
+	private pruneSlotOverrides(
+		map: Record<string, unknown> | undefined,
+		slots: (ContentSlotType | ContentSlotType[])[],
+	): void {
+		if (!map) return;
+		for (const key of Object.keys(map)) {
+			const m = /^(\d+)(?:-(\d+))?$/.exec(key);
+			if (!m) {
+				delete map[key];
+				continue;
+			}
+			const col = parseInt(m[1], 10);
+			if (col >= slots.length) {
+				delete map[key];
+				continue;
+			}
+			if (m[2] !== undefined) {
+				const sub = parseInt(m[2], 10);
+				const slotVal = slots[col];
+				const subLen = Array.isArray(slotVal) ? slotVal.length : 1;
+				if (sub >= subLen) delete map[key];
+			}
+		}
+	}
+
+	/** Normalise imported settings so arrays/overrides stay within valid bounds. */
+	private sanitizeImportedSettings(): void {
+		const s = this.plugin.settings;
+
+		if (Array.isArray(s.quickLinks)) {
+			s.quickLinks = s.quickLinks
+				.filter((l) => l && typeof l.url === "string")
+				.map((l) => ({
+					url: l.url,
+					label: typeof l.label === "string" ? l.label : "",
+					icon: typeof l.icon === "string" ? l.icon : "",
+				}))
+				.slice(0, 50);
+		}
+
+		if (Array.isArray(s.rowLayouts)) {
+			for (const row of s.rowLayouts) {
+				row.columns = Math.max(1, Math.min(12, safeParseInt(row.columns, 2, 1) ?? 2));
+				if (!Array.isArray(row.slots)) row.slots = [];
+				row.slots = row.slots.slice(0, 12);
+				while (row.slots.length < row.columns) row.slots.push("none");
+				row.slots = row.slots.slice(0, row.columns);
+				this.pruneSlotOverrides(row.slotHeadings, row.slots);
+				this.pruneSlotOverrides(row.vaultListSlots, row.slots);
+				this.pruneSlotOverrides(row.dividerSlots, row.slots);
+			}
+		}
+
+		if (Array.isArray(s.columnLayouts)) {
+			for (const col of s.columnLayouts) {
+				if (!Array.isArray(col.slots)) col.slots = [];
+				col.slots = col.slots.slice(0, 12);
+				this.pruneSlotOverrides(col.slotHeadings, col.slots);
+				this.pruneSlotOverrides(col.vaultListSlots, col.slots);
+				this.pruneSlotOverrides(col.dividerSlots, col.slots);
+			}
+		}
+
+		if (Array.isArray(s.vaultLists)) {
+			for (const vl of s.vaultLists) {
+				vl.count = Math.max(3, Math.min(50, safeParseInt(vl.count, 9, 3) ?? 9));
+			}
+		}
+	}
+
+	/** Commit a free-typed icon input value on blur so it isn't lost (#17). */
+	private addIconPickerCommitBlur(
+		input: HTMLInputElement,
+		preview: HTMLElement,
+		onCommit: (value: string) => void,
+	): void {
+		const commit = () => {
+			onCommit(input.value);
+			preview.innerHTML = SMALL_ICONS[input.value] || SMALL_ICONS["MOC"] || "";
+		};
+		input.addEventListener("change", commit);
+		input.addEventListener("blur", commit);
+	}
+
 	// ═══════════════════════════════════════════════════════
 	//  TAB: Dashboard (layout builder)
 	// ═══════════════════════════════════════════════════════
 
 	private displayDashboardTab(containerEl: HTMLElement): void {
 		containerEl.createEl("p", {
-			text: "Build your dashboard layout by arranging rows, columns, and dividers. Assign content to each slot.",
+			text:
+				"Build your dashboard layout by arranging rows, columns, and dividers. Assign content to each slot.",
 			cls: "setting-item-description",
 		});
+
+		this.renderCollapseAllBar(containerEl, this.collectLayoutKeys());
+
+		this.ensureLayoutIds();
 
 		// ── Row layouts ──────────────────────────────────
 		new Setting(containerEl).setHeading().setName("Row layouts");
@@ -500,6 +783,7 @@ export class NexusSettingTab extends PluginSettingTab {
 					.onClick(async () => {
 						const n = rowLayouts.length + 1;
 						rowLayouts.push({
+							id: `row-${Date.now()}-${n}`,
 							name: `Row ${n}`,
 							columns: 2,
 							proportion: "50/50",
@@ -507,13 +791,14 @@ export class NexusSettingTab extends PluginSettingTab {
 							slots: ["moc-cards", "none"],
 						});
 						await this.saveAndRefresh();
-					})
+					}),
 			);
 
 		// ── Column layouts ────────────────────────────────
 		new Setting(containerEl).setHeading().setName("Column layouts");
 		containerEl.createEl("p", {
-			text: "Columns place content vertically. Add slots to build a vertical column of dashboard sections.",
+			text:
+				"Columns place content vertically. Add slots to build a vertical column of dashboard sections.",
 			cls: "setting-item-description",
 		});
 
@@ -532,13 +817,14 @@ export class NexusSettingTab extends PluginSettingTab {
 					.onClick(async () => {
 						const n = columnLayouts.length + 1;
 						columnLayouts.push({
+							id: `col-${Date.now()}-${n}`,
 							name: `Column ${n}`,
 							spacing: "1rem",
 							align: "stretch",
 							slots: ["moc-cards"],
 						});
 						await this.saveAndRefresh();
-					})
+					}),
 			);
 
 		// ── Saved row proportions ─────────────────────────
@@ -562,30 +848,45 @@ export class NexusSettingTab extends PluginSettingTab {
 							.onClick(async () => {
 								delete this.plugin.settings.rowSizes[key];
 								await this.saveAndRefresh();
-							})
+							}),
 					);
 			}
 		}
 	}
 
-	private renderRowLayoutCard(containerEl: HTMLElement, layout: RowLayoutEntry, index: number): void {
-		const isCollapsed = this.collapsedRowCards.get(index) ?? true;
+	private renderRowLayoutCard(
+		containerEl: HTMLElement,
+		layout: RowLayoutEntry,
+		index: number,
+	): void {
+		const layoutId = layout.id || `row-${index}`;
+		const isCollapsed = this.isCollapsed(NexusSettingTab.collapseKey("row", layoutId));
 
 		const heading = containerEl.createDiv({ cls: "nexus-settings-moc-heading" });
-		const { titleWrap, actions } = this.setupDragAndDrop(heading, index, this.plugin.settings.rowLayouts, this.collapsedRowCards);
+		const { titleWrap, actions } = this.setupDragAndDrop(
+			heading,
+			index,
+			this.plugin.settings.rowLayouts,
+			isCollapsed,
+		);
 
 		// Title with slot summary
 		const slots = layout.slots || [];
-		const slotSummary = slots.map((s) => {
-			if (Array.isArray(s)) {
-				return s.map((sub) => CONTENT_SLOT_OPTIONS[sub] || "Empty").join(" + ");
-			}
-			return CONTENT_SLOT_OPTIONS[s] || "Empty";
-		}).join(" | ");
+		const slotSummary = slots
+			.map((s) => {
+				if (Array.isArray(s)) {
+					return s.map((sub) => CONTENT_SLOT_OPTIONS[sub] || "Empty").join(" + ");
+				}
+				return CONTENT_SLOT_OPTIONS[s] || "Empty";
+			})
+			.join(" | ");
 		titleWrap.createEl("span", { text: `${layout.name} (${layout.columns} cols: ${slotSummary})` });
 
 		// Delete button
-		const deleteBtn = actions.createEl("button", { cls: "nexus-settings-moc-btn--delete", attr: { "aria-label": "Remove" } });
+		const deleteBtn = actions.createEl("button", {
+			cls: "nexus-settings-moc-btn--delete",
+			attr: { "aria-label": "Remove" },
+		});
 		setIcon(deleteBtn, "trash");
 		deleteBtn.addEventListener("click", async (e) => {
 			e.stopPropagation();
@@ -596,14 +897,14 @@ export class NexusSettingTab extends PluginSettingTab {
 				async () => {
 					this.plugin.settings.rowLayouts.splice(index, 1);
 					await this.saveAndRefresh();
-				}
+				},
 			).open();
 		});
 
 		// Toggle collapse
 		heading.addEventListener("click", () => {
-			this.collapsedRowCards.set(index, !isCollapsed);
-			this.display();
+			this.setCollapsed(NexusSettingTab.collapseKey("row", layoutId), !isCollapsed);
+			this.saveAndRefresh();
 		});
 
 		if (isCollapsed) return;
@@ -613,17 +914,25 @@ export class NexusSettingTab extends PluginSettingTab {
 		// Visual row preview with slot labels
 		const preview = containerEl.createDiv({ cls: "nexus-row-editor-visual" });
 		const cols = layout.columns;
+		const previewColEls: HTMLElement[] = [];
 		const parts = layout.proportion.split("/").map((s) => parseInt(s.trim(), 10));
 
 		for (let i = 0; i < cols; i++) {
 			const colEl = preview.createDiv({ cls: "nexus-row-editor-col" });
-			const width = safeParseInt(String(parts[i] ?? 0), Math.floor(100 / cols), 1) ?? Math.floor(100 / cols);
+			previewColEls.push(colEl);
+			const width = Math.min(
+				100,
+				safeParseInt(String(parts[i] ?? 0), Math.floor(100 / cols), 1) ?? Math.floor(100 / cols),
+			);
 			colEl.style.width = `${width}%`;
 			const slot = layout.slots?.[i] || "none";
 			if (Array.isArray(slot)) {
 				for (const sub of slot) {
 					const subEl = colEl.createDiv({ cls: "nexus-row-editor-col-sub" });
-					subEl.createEl("span", { text: CONTENT_SLOT_OPTIONS[sub] || "Empty", cls: "nexus-row-editor-col-label" });
+					subEl.createEl("span", {
+						text: CONTENT_SLOT_OPTIONS[sub] || "Empty",
+						cls: "nexus-row-editor-col-label",
+					});
 				}
 			} else {
 				const slotLabel = CONTENT_SLOT_OPTIONS[slot as ContentSlotType] || "Empty";
@@ -644,37 +953,44 @@ export class NexusSettingTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					this.plugin.settings.rowLayouts[index].name = value || `Row ${index + 1}`;
 					await this.plugin.saveSettings();
-				})
+				}),
 		);
 
 		// Columns
 		const colSetting = new Setting(fields);
 		colSetting.setName("Columns");
-		colSetting.addSlider((slider) =>
+		colSetting.addSlider((slider) => {
+			const applyColumns = (value: number) => {
+				const safeCols = Number.isFinite(value) && value >= 1 ? value : 2;
+				const layoutRef = this.plugin.settings.rowLayouts[index];
+				layoutRef.columns = safeCols;
+				const part = Math.floor(100 / safeCols);
+				const newParts: number[] = [];
+				for (let j = 0; j < safeCols - 1; j++) {
+					newParts.push(part);
+				}
+				newParts.push(100 - part * (safeCols - 1));
+				layoutRef.proportion = newParts.join("/");
+				const currentSlots = layoutRef.slots || [];
+				while (currentSlots.length < safeCols) {
+					currentSlots.push("none");
+				}
+				while (currentSlots.length > safeCols) {
+					currentSlots.pop();
+				}
+				this.pruneSlotOverrides(layoutRef.slotHeadings, currentSlots);
+				this.pruneSlotOverrides(layoutRef.vaultListSlots, currentSlots);
+				this.pruneSlotOverrides(layoutRef.dividerSlots, currentSlots);
+			};
 			slider
 				.setLimits(1, 4, 1)
 				.setValue(layout.columns)
 				.setDynamicTooltip()
 				.onChange(async (value) => {
-					const safeCols = Number.isFinite(value) && value >= 1 ? value : 2;
-					this.plugin.settings.rowLayouts[index].columns = safeCols;
-					const part = Math.floor(100 / safeCols);
-					const newParts: number[] = [];
-					for (let j = 0; j < safeCols - 1; j++) {
-						newParts.push(part);
-					}
-					newParts.push(100 - part * (safeCols - 1));
-					this.plugin.settings.rowLayouts[index].proportion = newParts.join("/");
-					const currentSlots = this.plugin.settings.rowLayouts[index].slots || [];
-					while (currentSlots.length < safeCols) {
-						currentSlots.push("none");
-					}
-					while (currentSlots.length > safeCols) {
-						currentSlots.pop();
-					}
+					applyColumns(value);
 					await this.saveAndRefresh();
-				})
-		);
+				});
+		});
 
 		// Proportion
 		const propSetting = new Setting(fields);
@@ -687,7 +1003,8 @@ export class NexusSettingTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					this.plugin.settings.rowLayouts[index].proportion = value;
 					await this.plugin.saveSettings();
-				})
+					this.updateRowPreviewWidths(previewColEls, value, cols);
+				}),
 		);
 
 		// Alignment
@@ -711,7 +1028,9 @@ export class NexusSettingTab extends PluginSettingTab {
 		for (let i = 0; i < layout.columns; i++) {
 			const slotVal = currentSlots[i] || "none";
 			const isSubSlot = Array.isArray(slotVal);
-			const slotList: ContentSlotType[] = isSubSlot ? slotVal as ContentSlotType[] : [slotVal as ContentSlotType];
+			const slotList: ContentSlotType[] = isSubSlot
+				? (slotVal as ContentSlotType[])
+				: [slotVal as ContentSlotType];
 
 			const colHeading = fields.createEl("div", { cls: "nexus-col-slot-heading" });
 			colHeading.createEl("strong", { text: `Column ${i + 1}` });
@@ -726,13 +1045,17 @@ export class NexusSettingTab extends PluginSettingTab {
 				slotRow.style.gap = "8px";
 
 				if (isSubSlot) {
-					const slotLabelEl = slotRow.createEl("span", { text: `Slot ${si + 1}:`, cls: "setting-item-description" });
+					const slotLabelEl = slotRow.createEl("span", {
+						text: `Slot ${si + 1}:`,
+						cls: "setting-item-description",
+					});
 					slotLabelEl.style.minWidth = "60px";
 				}
 
 				const slotSelect = slotRow.createEl("select", { cls: "dropdown" });
 				for (const [key, label] of Object.entries(CONTENT_SLOT_OPTIONS)) {
 					const opt = slotSelect.createEl("option", { text: label, value: key });
+					if (!this.isSlotEnabled(key as ContentSlotType)) opt.disabled = true;
 					if (key === currentSlot) opt.selected = true;
 				}
 				slotSelect.addEventListener("change", async () => {
@@ -750,84 +1073,51 @@ export class NexusSettingTab extends PluginSettingTab {
 					const removeBtn = slotRow.createEl("button", { cls: "nexus-row-editor-card-btn" });
 					setIcon(removeBtn, "x");
 					removeBtn.addEventListener("click", async () => {
-						const arr = this.plugin.settings.rowLayouts[index].slots[i] as ContentSlotType[];
+						const layoutRef = this.plugin.settings.rowLayouts[index];
+						const arr = layoutRef.slots[i] as ContentSlotType[];
+						const oldLen = arr.length;
 						arr.splice(si, 1);
 						if (arr.length === 1) {
-							this.plugin.settings.rowLayouts[index].slots[i] = arr[0];
+							layoutRef.slots[i] = arr[0];
 						}
-						const headings = this.plugin.settings.rowLayouts[index].slotHeadings || {};
-						delete headings[`${i}-${si}`];
+						// Shift overrides down so configs follow their slots (#1/#2)
+						for (const map of [
+							layoutRef.slotHeadings,
+							layoutRef.vaultListSlots,
+							layoutRef.dividerSlots,
+						]) {
+							if (!map) continue;
+							for (let p = si; p < arr.length; p++) {
+								const from = `${i}-${p + 1}`;
+								if (from in map) map[`${i}-${p}`] = map[from];
+							}
+							for (let p = arr.length; p < oldLen; p++) {
+								delete map[`${i}-${p}`];
+							}
+							if (arr.length === 1 && `${i}-0` in map) {
+								map[String(i)] = map[`${i}-0`];
+								delete map[`${i}-0`];
+							}
+						}
 						await this.saveAndRefresh();
 					});
 				}
 
 				// Heading config fields (when slot is "heading")
 				if (currentSlot === "heading") {
-					const headingCfg = layout.slotHeadings?.[subKey] || { text: "Section" };
-
-					const textRow = fields.createDiv({ cls: "nexus-column-slot-row" });
-					textRow.style.display = "flex";
-					textRow.style.alignItems = "center";
-					textRow.style.gap = "8px";
-					textRow.style.paddingLeft = isSubSlot ? "68px" : "8px";
-					const textLabel = textRow.createEl("span", { text: "Text:", cls: "setting-item-description" });
-					textLabel.style.minWidth = "40px";
-					const textInput = textRow.createEl("input", { type: "text", cls: "setting-text-input" });
-					textInput.value = headingCfg.text || "";
-					textInput.placeholder = "Heading text";
-					textInput.addEventListener("change", async () => {
-						const h = (this.plugin.settings.rowLayouts[index].slotHeadings ??= {});
-						h[subKey] = { ...(h[subKey] || { text: "Section" }), text: textInput.value };
-						await this.plugin.saveSettings();
-					});
-
-					const colorRow = fields.createDiv({ cls: "nexus-column-slot-row" });
-					colorRow.style.display = "flex";
-					colorRow.style.alignItems = "center";
-					colorRow.style.gap = "8px";
-					colorRow.style.paddingLeft = isSubSlot ? "68px" : "8px";
-					const colorLabel = colorRow.createEl("span", { text: "Color:", cls: "setting-item-description" });
-					colorLabel.style.minWidth = "40px";
-					const colorInput = colorRow.createEl("input", { type: "text", cls: "setting-text-input" });
-					colorInput.value = headingCfg.color || "";
-					colorInput.placeholder = "CSS color (optional)";
-					colorInput.addEventListener("change", async () => {
-						const h = (this.plugin.settings.rowLayouts[index].slotHeadings ??= {});
-						h[subKey] = { ...(h[subKey] || { text: "Section" }), color: colorInput.value || undefined };
-						await this.plugin.saveSettings();
-					});
-
-					const asRow = fields.createDiv({ cls: "nexus-column-slot-row" });
-					asRow.style.display = "flex";
-					asRow.style.alignItems = "center";
-					asRow.style.gap = "8px";
-					asRow.style.paddingLeft = isSubSlot ? "68px" : "8px";
-
-					const alignLabel = asRow.createEl("span", { text: "Align:", cls: "setting-item-description" });
-					alignLabel.style.minWidth = "40px";
-					const alignSelect = asRow.createEl("select", { cls: "dropdown" });
-					for (const [ak, al] of [["left", "Left"], ["center", "Center"], ["right", "Right"]]) {
-						const opt = alignSelect.createEl("option", { text: al, value: ak });
-						if (ak === (headingCfg.align || "left")) opt.selected = true;
-					}
-					alignSelect.addEventListener("change", async () => {
-						const h = (this.plugin.settings.rowLayouts[index].slotHeadings ??= {});
-						h[subKey] = { ...(h[subKey] || { text: "Section" }), align: alignSelect.value as "left" | "center" | "right" };
-						await this.plugin.saveSettings();
-					});
-
-					const sizeLabel = asRow.createEl("span", { text: "Size:", cls: "setting-item-description" });
-					sizeLabel.style.marginLeft = "12px";
-					const sizeSelect = asRow.createEl("select", { cls: "dropdown" });
-					for (const [sk, sl] of [["small", "Small"], ["medium", "Medium"], ["large", "Large"]]) {
-						const opt = sizeSelect.createEl("option", { text: sl, value: sk });
-						if (sk === (headingCfg.size || "medium")) opt.selected = true;
-					}
-					sizeSelect.addEventListener("change", async () => {
-						const h = (this.plugin.settings.rowLayouts[index].slotHeadings ??= {});
-						h[subKey] = { ...(h[subKey] || { text: "Section" }), size: sizeSelect.value as "small" | "medium" | "large" };
-						await this.plugin.saveSettings();
-					});
+					this.renderHeadingConfigEditor(
+						fields,
+						subKey,
+						isSubSlot,
+						() => {
+							return (this.plugin.settings.rowLayouts[index].slotHeadings || {})[subKey];
+						},
+						async (patch) => {
+							const h = (this.plugin.settings.rowLayouts[index].slotHeadings ??= {});
+							h[subKey] = { ...(h[subKey] || { text: "Section" }), ...patch };
+							await this.plugin.saveSettings();
+						},
+					);
 				}
 
 				// Vault list selector (when slot is "vault-activity")
@@ -863,22 +1153,41 @@ export class NexusSettingTab extends PluginSettingTab {
 			const addSlotBtn = addSlotRow.createEl("button", { cls: "nexus-row-editor-card-btn" });
 			addSlotBtn.textContent = "+ Add Slot";
 			addSlotBtn.addEventListener("click", async () => {
-				const current = this.plugin.settings.rowLayouts[index].slots[i];
+				const layoutRef = this.plugin.settings.rowLayouts[index];
+				const current = layoutRef.slots[i];
 				if (Array.isArray(current)) {
 					current.push("none");
 				} else {
-					this.plugin.settings.rowLayouts[index].slots[i] = [current, "none"];
+					layoutRef.slots[i] = [current, "none"];
+					// Migrate the single-slot config to the first sub-slot key (#3)
+					for (const map of [layoutRef.slotHeadings, layoutRef.vaultListSlots, layoutRef.dividerSlots]) {
+						if (!map) continue;
+						if (String(i) in map) {
+							map[`${i}-0`] = map[String(i)];
+							delete map[String(i)];
+						}
+					}
 				}
 				await this.saveAndRefresh();
 			});
 		}
 	}
 
-	private renderColumnLayoutCard(containerEl: HTMLElement, layout: ColumnLayoutEntry, index: number): void {
-		const isCollapsed = this.collapsedColCards.get(index) ?? true;
+	private renderColumnLayoutCard(
+		containerEl: HTMLElement,
+		layout: ColumnLayoutEntry,
+		index: number,
+	): void {
+		const layoutId = layout.id || String(index);
+		const isCollapsed = this.isCollapsed(NexusSettingTab.collapseKey("col", layoutId));
 
 		const heading = containerEl.createDiv({ cls: "nexus-settings-moc-heading" });
-		const { titleWrap, actions } = this.setupDragAndDrop(heading, index, this.plugin.settings.columnLayouts, this.collapsedColCards);
+		const { titleWrap, actions } = this.setupDragAndDrop(
+			heading,
+			index,
+			this.plugin.settings.columnLayouts,
+			isCollapsed,
+		);
 
 		// Title with slot summary
 		const slots = layout.slots || [];
@@ -886,7 +1195,10 @@ export class NexusSettingTab extends PluginSettingTab {
 		titleWrap.createEl("span", { text: `${layout.name} (${slotSummary})` });
 
 		// Delete button
-		const deleteBtn = actions.createEl("button", { cls: "nexus-settings-moc-btn--delete", attr: { "aria-label": "Remove" } });
+		const deleteBtn = actions.createEl("button", {
+			cls: "nexus-settings-moc-btn--delete",
+			attr: { "aria-label": "Remove" },
+		});
 		setIcon(deleteBtn, "trash");
 		deleteBtn.addEventListener("click", async (e) => {
 			e.stopPropagation();
@@ -896,14 +1208,16 @@ export class NexusSettingTab extends PluginSettingTab {
 				"This column layout will be removed from your dashboard.",
 				async () => {
 					this.plugin.settings.columnLayouts.splice(index, 1);
+					this.deleteCollapsed(NexusSettingTab.collapseKey("col", layoutId));
 					await this.saveAndRefresh();
-				}
+				},
 			).open();
 		});
 
 		// Toggle collapse
 		heading.addEventListener("click", () => {
-			this.collapsedColCards.set(index, !isCollapsed);
+			this.setCollapsed(NexusSettingTab.collapseKey("col", layoutId), !isCollapsed);
+			void this.plugin.saveSettings();
 			this.display();
 		});
 
@@ -920,7 +1234,10 @@ export class NexusSettingTab extends PluginSettingTab {
 			const slotEl = preview.createDiv({ cls: "nexus-row-editor-col" });
 			slotEl.style.width = "100%";
 			slotEl.style.minHeight = "24px";
-			slotEl.createEl("span", { text: CONTENT_SLOT_OPTIONS[slot] || "Empty", cls: "nexus-row-editor-col-label" });
+			slotEl.createEl("span", {
+				text: CONTENT_SLOT_OPTIONS[slot] || "Empty",
+				cls: "nexus-row-editor-col-label",
+			});
 		}
 
 		// Edit fields
@@ -936,7 +1253,7 @@ export class NexusSettingTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					this.plugin.settings.columnLayouts[index].name = value || `Column ${index + 1}`;
 					await this.plugin.saveSettings();
-				})
+				}),
 		);
 
 		// Spacing
@@ -949,7 +1266,7 @@ export class NexusSettingTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					this.plugin.settings.columnLayouts[index].spacing = value || "1rem";
 					await this.plugin.saveSettings();
-				})
+				}),
 		);
 
 		// Alignment
@@ -962,7 +1279,8 @@ export class NexusSettingTab extends PluginSettingTab {
 			dropdown.addOption("right", "Right");
 			dropdown.setValue(layout.align);
 			dropdown.onChange(async (value) => {
-				this.plugin.settings.columnLayouts[index].align = value as "left" | "center" | "right" | "stretch";
+				this.plugin.settings.columnLayouts[index].align = value as
+					"left" | "center" | "right" | "stretch";
 				await this.plugin.saveSettings();
 			});
 		});
@@ -975,12 +1293,16 @@ export class NexusSettingTab extends PluginSettingTab {
 			slotRow.style.alignItems = "center";
 			slotRow.style.gap = "8px";
 
-			const slotLabel = slotRow.createEl("span", { text: `Slot ${i + 1}:`, cls: "setting-item-description" });
+			const slotLabel = slotRow.createEl("span", {
+				text: `Slot ${i + 1}:`,
+				cls: "setting-item-description",
+			});
 			slotLabel.style.minWidth = "60px";
 
 			const slotSelect = slotRow.createEl("select", { cls: "dropdown" });
 			for (const [key, label] of Object.entries(CONTENT_SLOT_OPTIONS)) {
 				const opt = slotSelect.createEl("option", { text: label, value: key });
+				if (!this.isSlotEnabled(key as ContentSlotType)) opt.disabled = true;
 				if (key === colSlots[i]) opt.selected = true;
 			}
 			slotSelect.addEventListener("change", async () => {
@@ -991,9 +1313,40 @@ export class NexusSettingTab extends PluginSettingTab {
 			const removeBtn = slotRow.createEl("button", { cls: "nexus-row-editor-card-btn" });
 			setIcon(removeBtn, "x");
 			removeBtn.addEventListener("click", async () => {
-				this.plugin.settings.columnLayouts[index].slots.splice(i, 1);
+				const layoutRef = this.plugin.settings.columnLayouts[index];
+				const oldLen = layoutRef.slots.length;
+				layoutRef.slots.splice(i, 1);
+				// Shift overrides down so configs follow their slots (#3)
+				for (const map of [layoutRef.slotHeadings, layoutRef.vaultListSlots, layoutRef.dividerSlots]) {
+					if (!map) continue;
+					for (let p = i; p < layoutRef.slots.length; p++) {
+						const from = String(p + 1);
+						if (from in map) map[String(p)] = map[from];
+					}
+					for (let p = layoutRef.slots.length; p < oldLen; p++) {
+						delete map[String(p)];
+					}
+				}
 				await this.saveAndRefresh();
 			});
+
+			// Heading config fields (when slot is "heading")
+			if (colSlots[i] === "heading") {
+				const subKey = String(i);
+				this.renderHeadingConfigEditor(
+					fields,
+					subKey,
+					false,
+					() => {
+						return (this.plugin.settings.columnLayouts[index].slotHeadings || {})[subKey];
+					},
+					async (patch) => {
+						const h = (this.plugin.settings.columnLayouts[index].slotHeadings ??= {});
+						h[subKey] = { ...(h[subKey] || { text: "Section" }), ...patch };
+						await this.plugin.saveSettings();
+					},
+				);
+			}
 
 			// Vault list selector (when slot is "vault-activity")
 			if (colSlots[i] === "vault-activity") {
@@ -1031,6 +1384,81 @@ export class NexusSettingTab extends PluginSettingTab {
 		});
 	}
 
+	private renderHeadingConfigEditor(
+		fields: HTMLElement,
+		_subKey: string,
+		isSubSlot: boolean,
+		getCfg: () => HeadingConfig | undefined,
+		onUpdate: (patch: Partial<HeadingConfig>) => Promise<void>,
+	): void {
+		const headingCfg = getCfg() || { text: "Section" };
+		const pad = isSubSlot ? "68px" : "8px";
+
+		const textRow = fields.createDiv({ cls: "nexus-column-slot-row" });
+		textRow.style.display = "flex";
+		textRow.style.alignItems = "center";
+		textRow.style.gap = "8px";
+		textRow.style.paddingLeft = pad;
+		const textLabel = textRow.createEl("span", { text: "Text:", cls: "setting-item-description" });
+		textLabel.style.minWidth = "40px";
+		const textInput = textRow.createEl("input", { type: "text", cls: "setting-text-input" });
+		textInput.value = headingCfg.text || "";
+		textInput.placeholder = "Heading text";
+		textInput.addEventListener("change", () => {
+			void onUpdate({ text: textInput.value });
+		});
+
+		const colorRow = fields.createDiv({ cls: "nexus-column-slot-row" });
+		colorRow.style.display = "flex";
+		colorRow.style.alignItems = "center";
+		colorRow.style.gap = "8px";
+		colorRow.style.paddingLeft = pad;
+		const colorLabel = colorRow.createEl("span", { text: "Color:", cls: "setting-item-description" });
+		colorLabel.style.minWidth = "40px";
+		const colorInput = colorRow.createEl("input", { type: "text", cls: "setting-text-input" });
+		colorInput.value = headingCfg.color || "";
+		colorInput.placeholder = "CSS color (optional)";
+		colorInput.addEventListener("change", () => {
+			void onUpdate({ color: colorInput.value || undefined });
+		});
+
+		const asRow = fields.createDiv({ cls: "nexus-column-slot-row" });
+		asRow.style.display = "flex";
+		asRow.style.alignItems = "center";
+		asRow.style.gap = "8px";
+		asRow.style.paddingLeft = pad;
+
+		const alignLabel = asRow.createEl("span", { text: "Align:", cls: "setting-item-description" });
+		alignLabel.style.minWidth = "40px";
+		const alignSelect = asRow.createEl("select", { cls: "dropdown" });
+		for (const [ak, al] of [
+			["left", "Left"],
+			["center", "Center"],
+			["right", "Right"],
+		]) {
+			const opt = alignSelect.createEl("option", { text: al, value: ak });
+			if (ak === (headingCfg.align || "left")) opt.selected = true;
+		}
+		alignSelect.addEventListener("change", () => {
+			void onUpdate({ align: alignSelect.value as "left" | "center" | "right" });
+		});
+
+		const sizeLabel = asRow.createEl("span", { text: "Size:", cls: "setting-item-description" });
+		sizeLabel.style.marginLeft = "12px";
+		const sizeSelect = asRow.createEl("select", { cls: "dropdown" });
+		for (const [sk, sl] of [
+			["small", "Small"],
+			["medium", "Medium"],
+			["large", "Large"],
+		]) {
+			const opt = sizeSelect.createEl("option", { text: sl, value: sk });
+			if (sk === (headingCfg.size || "medium")) opt.selected = true;
+		}
+		sizeSelect.addEventListener("change", () => {
+			void onUpdate({ size: sizeSelect.value as "small" | "medium" | "large" });
+		});
+	}
+
 	// ═══════════════════════════════════════════════════════
 	//  TAB: Components (card/link/stats configs)
 	// ═══════════════════════════════════════════════════════
@@ -1041,854 +1469,39 @@ export class NexusSettingTab extends PluginSettingTab {
 			cls: "setting-item-description",
 		});
 
-		// ── MOC Cards ──────────────────────────────────
-		new Setting(containerEl).setHeading().setName("MOC cards");
-		containerEl.createEl("p", {
-			text: "Configure the MOC cards shown on your dashboard.",
-			cls: "setting-item-description",
-		});
+		this.renderCollapseAllBar(containerEl, this.collectComponentKeys());
 
-		new Setting(containerEl)
-			.setName("Show MOC cards")
-			.setDesc("Show map of content cards on the dashboard")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showMocCards)
-					.onChange(async (value) => {
-						this.plugin.settings.showMocCards = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Show divider")
-			.setDesc("Show a divider label above MOC cards")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showMocDivider)
-					.onChange(async (value) => {
-						this.plugin.settings.showMocDivider = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Divider label")
-			.setDesc("Text shown in the divider above MOC cards")
-			.addText((text) =>
-				text
-					.setPlaceholder("MOC CARDS")
-					.setValue(this.plugin.settings.mocDividerLabel)
-					.onChange(async (value) => {
-						this.plugin.settings.mocDividerLabel = value || "MOC CARDS";
-						await this.plugin.saveSettings();
-					})
-			);
-
-		this.plugin.settings.mocs.forEach((moc, i) => {
-			this.renderMocCard(containerEl, moc, i);
-		});
-
-		new Setting(containerEl)
-			.setName("Add MOC card")
-			.setDesc("Add a new card to the dashboard grid.")
-			.addButton((btn) =>
-				btn
-					.setButtonText("+ Add MOC")
-					.setCta()
-					.onClick(async () => {
-						this.plugin.settings.mocs.push({
-							path: "MOC/New MOC",
-							title: "New MOC",
-							desc: "Description here",
-							icon: "MOC",
-						});
-						await this.saveAndRefresh();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("MOC grid columns")
-			.setDesc("Number of columns for the MOC card grid")
-			.addSlider((slider) =>
-				slider
-					.setLimits(1, 4, 1)
-					.setValue(this.plugin.settings.mocGridColumns)
-					.setDynamicTooltip()
-					.onChange(async (value) => {
-						this.plugin.settings.mocGridColumns = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Show graph links")
-			.setDesc("Inject graph wikilinks on empty code blocks (can be overridden per-block)")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showGraph)
-					.onChange(async (value) => {
-						this.plugin.settings.showGraph = value;
-						await this.plugin.saveSettings();
-					})
-			);
+		this.renderMocCardsSection(containerEl);
 
 		// ── Stats ──────────────────────────────────────
-		new Setting(containerEl).setHeading().setName("Stats");
-
-		new Setting(containerEl)
-			.setName("Show stats")
-			.setDesc("Show vault statistics on the dashboard")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showStats)
-					.onChange(async (value) => {
-						this.plugin.settings.showStats = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		containerEl.createEl("p", {
-			text: "Configure the stat counters shown on the dashboard.",
-			cls: "setting-item-description",
-		});
-
-		this.plugin.settings.stats.forEach((stat, i) => {
-			this.renderStatEntry(containerEl, stat, i);
-		});
-
-		new Setting(containerEl)
-			.setName("Add stat")
-			.setDesc("Add a new stat counter")
-			.addButton((btn) =>
-				btn
-					.setButtonText("+ Add Stat")
-					.setCta()
-					.onClick(async () => {
-						this.plugin.settings.stats.push({ folder: "", label: "New Stat" });
-						await this.saveAndRefresh();
-					})
-			);
+		this.renderStatsSection(containerEl);
 
 		// ── Search ─────────────────────────────────────
-		new Setting(containerEl).setHeading().setName("Search");
-
-		new Setting(containerEl)
-			.setName("Show search bar")
-			.setDesc("Show a vault-wide search bar on the dashboard")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showSearch)
-					.onChange(async (value) => {
-						this.plugin.settings.showSearch = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Search default")
-			.setDesc("Default search scope")
-			.addDropdown((dropdown) => {
-				dropdown.addOption("vault", "Vault");
-				dropdown.addOption("cards", "Cards");
-				dropdown.setValue(this.plugin.settings.searchDefault);
-				dropdown.onChange(async (value) => {
-					this.plugin.settings.searchDefault = value as "vault" | "cards";
-					await this.plugin.saveSettings();
-				});
-			});
+		this.renderSearchSection(containerEl);
 
 		// ── Vault Activity ──────────────────────────────
-		new Setting(containerEl).setHeading().setName("Vault Activity");
-		containerEl.createEl("p", {
-			text: "Show a terminal-style list of files. Pick a preset per slot; a slot with no list selected shows recently modified files from the whole vault. Leave a list's label empty to hide its header.",
-			cls: "setting-item-description",
-		});
-
-		new Setting(containerEl)
-			.setName("Show vault activity")
-			.setDesc("Show vault activity slots on the dashboard. When off, vault activity slots render nothing.")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showVaultActivity)
-					.onChange(async (value) => {
-						this.plugin.settings.showVaultActivity = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Label")
-			.setDesc("Divider label for slots with no list selected. Leave empty to hide the header.")
-			.addText((text) =>
-				text
-					.setPlaceholder("VAULT ACTIVITY")
-					.setValue(this.plugin.settings.vaultActivityLabel)
-					.onChange(async (value) => {
-						this.plugin.settings.vaultActivityLabel = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Count")
-			.setDesc("Number of files shown in slots with no list selected")
-			.addSlider((slider) =>
-				slider
-					.setLimits(3, 50, 1)
-					.setValue(this.plugin.settings.vaultActivityCount)
-					.setDynamicTooltip()
-					.onChange(async (value) => {
-						this.plugin.settings.vaultActivityCount = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Show fade mask")
-			.setDesc("Fade the bottom of the list to hint at more content")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.vaultActivityShowFade)
-					.onChange(async (value) => {
-						this.plugin.settings.vaultActivityShowFade = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Maximum list height")
-			.setDesc("Max height of the list before scrolling (120–800px)")
-			.addSlider((slider) =>
-				slider
-					.setLimits(120, 800, 10)
-					.setValue(this.plugin.settings.vaultActivityMaxHeight)
-					.setDynamicTooltip()
-					.onChange(async (value) => {
-						this.plugin.settings.vaultActivityMaxHeight = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		this.plugin.settings.vaultLists.forEach((vl, i) => {
-			this.renderVaultListEntry(containerEl, vl, i);
-		});
-
-		new Setting(containerEl)
-			.setName("Add vault activity list")
-			.setDesc("Add a new named vault activity preset for use in layout slots.")
-			.addButton((btn) =>
-				btn
-					.setButtonText("+ Add List")
-					.setCta()
-					.onClick(async () => {
-						this.plugin.settings.vaultLists.push({
-							name: "New List",
-							path: "",
-							tags: "",
-							count: this.plugin.settings.vaultActivityCount,
-							label: "",
-						});
-						await this.saveAndRefresh();
-					})
-			);
-
-		// ── Divider ────────────────────────────────────
-		new Setting(containerEl).setHeading().setName("Divider");
-
-		containerEl.createEl("p", {
-			text: "Customize the appearance of section dividers. Labels are configured per component above.",
-			cls: "setting-item-description",
-		});
-
-		const currentPreset = detectDividerPreset(this.plugin.settings.dividerDesign);
-		new Setting(containerEl)
-			.setName("Divider style")
-			.setDesc("Choose a divider style preset")
-			.addDropdown((dropdown) => {
-				for (const [key, name] of Object.entries(DIVIDER_PRESET_NAMES)) {
-					dropdown.addOption(key, name);
-				}
-				dropdown.setValue(currentPreset);
-				dropdown.onChange(async (value) => {
-					const preset = DIVIDER_PRESETS[value];
-					if (preset) {
-						this.plugin.settings.dividerDesign = { ...preset };
-						await this.plugin.saveSettings();
-						this.renderDividerPreview(dividerPreviewEl);
-					}
-				});
-			});
-
-		const dividerPreviewEl = containerEl.createDiv();
-		this.renderDividerPreview(dividerPreviewEl);
+		this.renderVaultActivitySection(containerEl);
 
 		// ── Quick Links ────────────────────────────────
-		new Setting(containerEl).setHeading().setName("Quick Links");
-		containerEl.createEl("p", {
-			text: "Configure the quick links shown on the dashboard.",
-			cls: "setting-item-description",
-		});
-
-		new Setting(containerEl)
-			.setName("Show quick links")
-			.setDesc("Show quick links section on the dashboard")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showQuickLinks)
-					.onChange(async (value) => {
-						this.plugin.settings.showQuickLinks = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Show divider")
-			.setDesc("Show a divider label above quick links")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showQuickLinksDivider)
-					.onChange(async (value) => {
-						this.plugin.settings.showQuickLinksDivider = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Divider label")
-			.setDesc("Text shown in the divider above quick links")
-			.addText((text) =>
-				text
-					.setPlaceholder("Quick Links")
-					.setValue(this.plugin.settings.quickLinksDividerLabel)
-					.onChange(async (value) => {
-						this.plugin.settings.quickLinksDividerLabel = value || "Quick Links";
-						await this.plugin.saveSettings();
-					})
-			);
-
-		this.renderQuickLinksEditor(containerEl);
-
-		this.plugin.settings.showBookmarksAsLinks ??= false;
-		new Setting(containerEl)
-			.setName("Show Obsidian bookmarks")
-			.setDesc("Display items from the built-in Bookmarks plugin as quick links on the dashboard.")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showBookmarksAsLinks)
-					.onChange(async (value) => {
-						this.plugin.settings.showBookmarksAsLinks = value;
-						await this.saveAndRefresh();
-					})
-			);
+		this.renderQuickLinksSection(containerEl);
 
 		// ── Heatmap ─────────────────────────────────────
-		new Setting(containerEl).setHeading().setName("Heatmap");
-		containerEl.createEl("p", {
-			text: "GitHub-style contribution calendar showing daily vault activity.",
-			cls: "setting-item-description",
-		});
+		this.renderHeatmapSection(containerEl);
 
-		new Setting(containerEl)
-			.setName("Show heatmap")
-			.setDesc("Show the contribution heatmap on the dashboard")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showHeatmap)
-					.onChange(async (value) => {
-						this.plugin.settings.showHeatmap = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Weeks")
-			.setDesc("Number of weeks to display (8–52)")
-			.addSlider((slider) =>
-				slider
-					.setLimits(8, 52, 1)
-					.setValue(this.plugin.settings.heatmapWeeks)
-					.setDynamicTooltip()
-					.onChange(async (value) => {
-						this.plugin.settings.heatmapWeeks = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Label")
-			.setDesc("Text shown in the divider above the heatmap")
-			.addText((text) =>
-				text
-					.setPlaceholder("CONTRIBUTION ACTIVITY")
-					.setValue(this.plugin.settings.heatmapLabel)
-					.onChange(async (value) => {
-						this.plugin.settings.heatmapLabel = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		// ── Activity Tracking ──────────────────────────
-		new Setting(containerEl).setHeading().setName("Activity Tracking");
-		containerEl.createEl("p", {
-			text: "Global vault activity is recorded in the background and shown in the timeline, even when no dashboard is open.",
-			cls: "setting-item-description",
-		});
-
-		new Setting(containerEl)
-			.setName("Enable activity tracking")
-			.setDesc("Record vault file/folder events and persist them to data.json")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.activityTrackingEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.activityTrackingEnabled = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Track task checkboxes")
-			.setDesc("Record when a task checkbox is toggled")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.activityTaskTracking)
-					.onChange(async (value) => {
-						this.plugin.settings.activityTaskTracking = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		// ── Activity Timeline ──────────────────────────
-		new Setting(containerEl).setHeading().setName("Activity Timeline");
-		containerEl.createEl("p", {
-			text: "Terminal-style chronological log of vault file activity.",
-			cls: "setting-item-description",
-		});
-
-		new Setting(containerEl)
-			.setName("Show activity timeline")
-			.setDesc("Show the activity timeline on the dashboard")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showActivityTimeline)
-					.onChange(async (value) => {
-						this.plugin.settings.showActivityTimeline = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Number of entries")
-			.setDesc("How many activity entries to show")
-			.addSlider((slider) =>
-				slider
-					.setLimits(5, 50, 1)
-					.setValue(this.plugin.settings.activityTimelineCount)
-					.setDynamicTooltip()
-					.onChange(async (value) => {
-						this.plugin.settings.activityTimelineCount = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Show fade mask")
-			.setDesc("Fade the bottom of the list to hint at more content")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.activityTimelineShowFade)
-					.onChange(async (value) => {
-						this.plugin.settings.activityTimelineShowFade = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Maximum list height")
-			.setDesc("Max height of the list before scrolling (120–800px)")
-			.addSlider((slider) =>
-				slider
-					.setLimits(120, 800, 10)
-					.setValue(this.plugin.settings.activityTimelineMaxHeight)
-					.setDynamicTooltip()
-					.onChange(async (value) => {
-						this.plugin.settings.activityTimelineMaxHeight = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Label")
-			.setDesc("Text shown in the divider above the timeline")
-			.addText((text) =>
-				text
-					.setPlaceholder("ACTIVITY")
-					.setValue(this.plugin.settings.activityTimelineLabel)
-					.onChange(async (value) => {
-						this.plugin.settings.activityTimelineLabel = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Only markdown")
-			.setDesc("Only show activity for markdown files")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.activityTimelineOnlyMarkdown)
-					.onChange(async (value) => {
-						this.plugin.settings.activityTimelineOnlyMarkdown = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Include folders")
-			.setDesc("Restrict to these folder paths (comma-separated). Empty shows everything.")
-			.addText((text) =>
-				text
-					.setPlaceholder("Journal, Projects")
-					.setValue(this.plugin.settings.activityTimelineIncludeFolders)
-					.onChange(async (value) => {
-						this.plugin.settings.activityTimelineIncludeFolders = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Group by")
-			.setDesc("Group timeline entries by day or by file")
-			.addDropdown((dropdown) => {
-				dropdown.addOption("day", "Day");
-				dropdown.addOption("file", "File");
-				dropdown.setValue(this.plugin.settings.activityTimelineGroup);
-				dropdown.onChange(async (value) => {
-					this.plugin.settings.activityTimelineGroup = value as "day" | "file";
-					await this.plugin.saveSettings();
-				});
-			});
-
-		new Setting(containerEl)
-			.setName("Relative times")
-			.setDesc("Show \"3m ago\" instead of clock times")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.activityTimelineShowRelative)
-					.onChange(async (value) => {
-						this.plugin.settings.activityTimelineShowRelative = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Show date separators")
-			.setDesc("Show \"Today\" / \"Yesterday\" / date headings")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.activityTimelineShowDate)
-					.onChange(async (value) => {
-						this.plugin.settings.activityTimelineShowDate = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Show filter chips")
-			.setDesc("Show interactive action filter chips above the list")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.activityTimelineShowChips)
-					.onChange(async (value) => {
-						this.plugin.settings.activityTimelineShowChips = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Show \"load more\" button")
-			.setDesc("Show a button to load more entries beyond the count")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.activityTimelineShowMore)
-					.onChange(async (value) => {
-						this.plugin.settings.activityTimelineShowMore = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Log size")
-			.setDesc("Maximum number of events kept in the activity log (50–5000)")
-			.addSlider((slider) =>
-				slider
-					.setLimits(50, 5000, 50)
-					.setValue(this.plugin.settings.activityLogMax)
-					.setDynamicTooltip()
-					.onChange(async (value) => {
-						this.plugin.settings.activityLogMax = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Clear activity log")
-			.setDesc("Remove all recorded activity events")
-			.addButton((button) =>
-				button.setButtonText("Clear").setWarning().onClick(() => {
-					this.plugin.clearActivityLog();
-				})
-			);
+		// ── Activity Timeline (incl. tracking) ─────────
+		this.renderActivityTimelineSection(containerEl);
 
 		// ── Clock ──────────────────────────────────────
-		new Setting(containerEl).setHeading().setName("Clock");
-		containerEl.createEl("p", {
-			text: "Real-time digital clock with optional second timezone.",
-			cls: "setting-item-description",
-		});
-
-		new Setting(containerEl)
-			.setName("Show clock")
-			.setDesc("Show the clock on the dashboard")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showClock)
-					.onChange(async (value) => {
-						this.plugin.settings.showClock = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Timezone")
-			.setDesc("IANA timezone (e.g. America/New_York). Leave empty for local time.")
-			.addText((text) =>
-				text
-					.setPlaceholder("Local time")
-					.setValue(this.plugin.settings.clockTimezone)
-					.onChange(async (value) => {
-						this.plugin.settings.clockTimezone = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Show date")
-			.setDesc("Show the date below the time")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.clockShowDate)
-					.onChange(async (value) => {
-						this.plugin.settings.clockShowDate = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Show seconds")
-			.setDesc("Show seconds in the clock")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.clockShowSeconds)
-					.onChange(async (value) => {
-						this.plugin.settings.clockShowSeconds = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Format")
-			.setDesc("12-hour or 24-hour format")
-			.addDropdown((dropdown) => {
-				dropdown.addOption("12h", "12-hour");
-				dropdown.addOption("24h", "24-hour");
-				dropdown.setValue(this.plugin.settings.clockFormat);
-				dropdown.onChange(async (value) => {
-					this.plugin.settings.clockFormat = value as "12h" | "24h";
-					await this.plugin.saveSettings();
-				});
-			});
-
-		new Setting(containerEl)
-			.setName("Label")
-			.setDesc("Text shown in the divider above the clock")
-			.addText((text) =>
-				text
-					.setPlaceholder("")
-					.setValue(this.plugin.settings.clockLabel)
-					.onChange(async (value) => {
-						this.plugin.settings.clockLabel = value;
-						await this.plugin.saveSettings();
-					})
-			);
+		this.renderClockSection(containerEl);
 
 		// ── File Types ─────────────────────────────────
-		new Setting(containerEl).setHeading().setName("File Type Distribution");
-		containerEl.createEl("p", {
-			text: "Horizontal bar chart showing file type breakdown in the vault.",
-			cls: "setting-item-description",
-		});
+		this.renderFileTypesSection(containerEl);
 
-		new Setting(containerEl)
-			.setName("Show file type chart")
-			.setDesc("Show the file type distribution on the dashboard")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showFileTypeChart)
-					.onChange(async (value) => {
-						this.plugin.settings.showFileTypeChart = value;
-						await this.plugin.saveSettings();
-					})
-			);
+		// ── Task Summary ───────────────────────────────
+		this.renderTaskSummarySection(containerEl);
 
-		new Setting(containerEl)
-			.setName("Max types")
-			.setDesc("Maximum file types to display (3–15)")
-			.addSlider((slider) =>
-				slider
-					.setLimits(3, 15, 1)
-					.setValue(this.plugin.settings.fileTypeChartMax)
-					.setDynamicTooltip()
-					.onChange(async (value) => {
-						this.plugin.settings.fileTypeChartMax = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Label")
-			.setDesc("Text shown in the divider above the chart")
-			.addText((text) =>
-				text
-					.setPlaceholder("FILE TYPES")
-					.setValue(this.plugin.settings.fileTypeChartLabel)
-					.onChange(async (value) => {
-						this.plugin.settings.fileTypeChartLabel = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		// ── Task Summary ────────────────────────────────────────
-		new Setting(containerEl).setHeading().setName("Task Summary");
-		containerEl.createEl("p", {
-			text: "Aggregate open/done tasks from your vault as stats, a progress bar, and a task list.",
-			cls: "setting-item-description",
-		});
-
-		new Setting(containerEl)
-			.setName("Show task summary")
-			.setDesc("Show the task summary widget on the dashboard")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showTaskSummary)
-					.onChange(async (value) => {
-						this.plugin.settings.showTaskSummary = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Show progress bar")
-			.setDesc("Show a progress bar below the stats counters")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.taskSummaryShowProgress)
-					.onChange(async (value) => {
-						this.plugin.settings.taskSummaryShowProgress = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Show task list")
-			.setDesc("Show a scrollable list of unchecked tasks")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.taskSummaryShowList)
-					.onChange(async (value) => {
-						this.plugin.settings.taskSummaryShowList = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Folder filter")
-			.setDesc("Only count tasks in this vault folder (leave empty for all)")
-			.addText((text) =>
-				text
-					.setPlaceholder("Knowledge/Tasks & Action Management")
-					.setValue(this.plugin.settings.taskSummaryPath)
-					.onChange(async (value) => {
-						this.plugin.settings.taskSummaryPath = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Tag filter")
-			.setDesc("Comma-separated frontmatter tags to filter task files (leave empty for all)")
-			.addText((text) =>
-				text
-					.setPlaceholder("todo, tasks")
-					.setValue(this.plugin.settings.taskSummaryTags)
-					.onChange(async (value) => {
-						this.plugin.settings.taskSummaryTags = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Max tasks in list")
-			.setDesc("Maximum number of tasks to display in the list (5–30)")
-			.addSlider((slider) =>
-				slider
-					.setLimits(5, 30, 1)
-					.setValue(this.plugin.settings.taskSummaryCount)
-					.setDynamicTooltip()
-					.onChange(async (value) => {
-						this.plugin.settings.taskSummaryCount = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Show fade mask")
-			.setDesc("Fade the bottom of the list to hint at more content")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.taskSummaryShowFade)
-					.onChange(async (value) => {
-						this.plugin.settings.taskSummaryShowFade = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Maximum list height")
-			.setDesc("Max height of the list before scrolling (120–800px)")
-			.addSlider((slider) =>
-				slider
-					.setLimits(120, 800, 10)
-					.setValue(this.plugin.settings.taskSummaryMaxHeight)
-					.setDynamicTooltip()
-					.onChange(async (value) => {
-						this.plugin.settings.taskSummaryMaxHeight = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Label")
-			.setDesc("Text shown in the divider above the task summary")
-			.addText((text) =>
-				text
-					.setPlaceholder("TASKS")
-					.setValue(this.plugin.settings.taskSummaryLabel)
-					.onChange(async (value) => {
-						this.plugin.settings.taskSummaryLabel = value;
-						await this.plugin.saveSettings();
-					})
-			);
+		// ── Divider style (global) ─────────────────────
+		this.renderDividerStyleSection(containerEl);
 	}
 
 	// ── Export / Import helpers ──────────────────────────────
@@ -1929,7 +1542,8 @@ export class NexusSettingTab extends PluginSettingTab {
 				}
 				if (data.mocs) {
 					const validMocs = data.mocs.every(
-						(m: Record<string, unknown>) => m && typeof m.path === "string" && typeof m.title === "string"
+						(m: Record<string, unknown>) =>
+							m && typeof m.path === "string" && typeof m.title === "string",
 					);
 					if (!validMocs) {
 						new Notice("Invalid settings file: malformed MOC entries");
@@ -1938,7 +1552,8 @@ export class NexusSettingTab extends PluginSettingTab {
 				}
 				if (data.stats) {
 					const validStats = data.stats.every(
-						(s: Record<string, unknown>) => s && typeof s.folder === "string" && typeof s.label === "string"
+						(s: Record<string, unknown>) =>
+							s && typeof s.folder === "string" && typeof s.label === "string",
 					);
 					if (!validStats) {
 						new Notice("Invalid settings file: malformed stat entries");
@@ -1951,7 +1566,7 @@ export class NexusSettingTab extends PluginSettingTab {
 				}
 				if (data.vaultLists) {
 					const validVl = data.vaultLists.every(
-						(v: Record<string, unknown>) => v && typeof v.name === "string"
+						(v: Record<string, unknown>) => v && typeof v.name === "string",
 					);
 					if (!validVl) {
 						new Notice("Invalid settings file: malformed vault list entries");
@@ -1966,6 +1581,7 @@ export class NexusSettingTab extends PluginSettingTab {
 					}
 				}
 				Object.assign(this.plugin.settings, filtered);
+				this.sanitizeImportedSettings();
 				await this.saveAndRefresh();
 				new Notice("Settings imported");
 			} catch {
@@ -1978,16 +1594,25 @@ export class NexusSettingTab extends PluginSettingTab {
 	// ── MOC Card with drag-and-drop + color picker ────────────
 
 	renderMocCard(containerEl: HTMLElement, moc: MocEntry, index: number): void {
-		const isCollapsed = this.collapsedCards.get(index) ?? true;
+		const isCollapsed = this.isCollapsed(NexusSettingTab.collapseKey("moc", index));
 
 		const heading = containerEl.createDiv({ cls: "nexus-settings-moc-heading" });
-		const { titleWrap, actions } = this.setupDragAndDrop(heading, index, this.plugin.settings.mocs, this.collapsedCards);
+		const { titleWrap, actions } = this.setupDragAndDrop(
+			heading,
+			index,
+			this.plugin.settings.mocs,
+			this.isCollapsed(NexusSettingTab.collapseKey("moc", index)),
+			false,
+		);
 
 		// Title
 		titleWrap.createEl("span", { text: moc.title || "Untitled" });
 
 		// Delete button
-		const removeBtn = actions.createEl("button", { cls: "nexus-settings-moc-btn--delete", attr: { "aria-label": "Remove" } });
+		const removeBtn = actions.createEl("button", {
+			cls: "nexus-settings-moc-btn--delete",
+			attr: { "aria-label": "Remove" },
+		});
 		setIcon(removeBtn, "trash");
 		removeBtn.addEventListener("click", async (e) => {
 			e.stopPropagation();
@@ -1998,13 +1623,14 @@ export class NexusSettingTab extends PluginSettingTab {
 				async () => {
 					this.plugin.settings.mocs.splice(index, 1);
 					await this.saveAndRefresh();
-				}
+				},
 			).open();
 		});
 
 		// Toggle collapse
 		heading.addEventListener("click", () => {
-			this.collapsedCards.set(index, !isCollapsed);
+			this.setCollapsed(NexusSettingTab.collapseKey("moc", index), !isCollapsed);
+			void this.plugin.saveSettings();
 			this.display();
 		});
 
@@ -2030,7 +1656,9 @@ export class NexusSettingTab extends PluginSettingTab {
 			await this.plugin.saveSettings();
 		});
 
-		const datalist = notePathSetting.settingEl.createEl("datalist", { attr: { id: notePathDatalistId } });
+		const datalist = notePathSetting.settingEl.createEl("datalist", {
+			attr: { id: notePathDatalistId },
+		});
 		const mdFiles = this.app.vault.getMarkdownFiles();
 		for (const file of mdFiles) {
 			datalist.createEl("option", { attr: { value: file.path } });
@@ -2046,7 +1674,7 @@ export class NexusSettingTab extends PluginSettingTab {
 					.onChange(async (value) => {
 						this.plugin.settings.mocs[index].title = value;
 						await this.plugin.saveSettings();
-					})
+					}),
 			);
 
 		new Setting(containerEl)
@@ -2059,7 +1687,7 @@ export class NexusSettingTab extends PluginSettingTab {
 					.onChange(async (value) => {
 						this.plugin.settings.mocs[index].desc = value;
 						await this.plugin.saveSettings();
-					})
+					}),
 			);
 
 		// ── Icon picker (searchable with live preview) ──────
@@ -2100,9 +1728,9 @@ export class NexusSettingTab extends PluginSettingTab {
 					this.plugin.settings.mocs[index].icon = name;
 					await this.plugin.saveSettings();
 					// Update active state
-					iconGrid.querySelectorAll(".nexus-icon-picker-item").forEach((el) =>
-						el.classList.remove("nexus-icon-picker-item-active")
-					);
+					iconGrid
+						.querySelectorAll(".nexus-icon-picker-item")
+						.forEach((el) => el.classList.remove("nexus-icon-picker-item-active"));
 					btn.classList.add("nexus-icon-picker-item-active");
 				});
 			}
@@ -2119,6 +1747,10 @@ export class NexusSettingTab extends PluginSettingTab {
 
 		iconInput.addEventListener("input", () => {
 			renderIconGrid(iconInput.value);
+			// Commit typed value so it isn't lost when the user clicks away (#17)
+			iconPreview.innerHTML = SMALL_ICONS[iconInput.value] || SMALL_ICONS["MOC"] || "";
+			this.plugin.settings.mocs[index].icon = iconInput.value;
+			void this.plugin.saveSettings();
 		});
 
 		iconInput.addEventListener("focus", () => {
@@ -2131,10 +1763,17 @@ export class NexusSettingTab extends PluginSettingTab {
 			setTimeout(() => {
 				iconGrid.classList.remove("nexus-icon-picker-grid-open");
 			}, 200);
+			this.plugin.settings.mocs[index].icon = iconInput.value;
+			void this.plugin.saveSettings();
 		});
 
 		iconInput.addEventListener("keydown", (e) => {
 			if (e.key === "Escape") {
+				iconInput.blur();
+			}
+			if (e.key === "Enter") {
+				this.plugin.settings.mocs[index].icon = iconInput.value;
+				void this.plugin.saveSettings();
 				iconInput.blur();
 			}
 		});
@@ -2164,44 +1803,102 @@ export class NexusSettingTab extends PluginSettingTab {
 	// ── Stats entry ──────────────────────────────────────────────
 
 	renderStatEntry(containerEl: HTMLElement, stat: StatEntry, index: number): void {
-		const folders = getVaultFolders(this.app);
+		const folders = [...getVaultFolders(this.app)];
 		if (stat.folder && !folders.includes(stat.folder)) {
 			folders.push(stat.folder);
 			folders.sort();
 		}
 
-		const setting = new Setting(containerEl);
+		const wrap = containerEl.createDiv({ cls: "nexus-stat-entry" });
 
-		setting.setName(stat.label);
-		setting.addText((text) =>
-			text
-				.setPlaceholder("Label")
-				.setValue(stat.label)
-				.onChange(async (value) => {
-					this.plugin.settings.stats[index].label = value;
-					await this.plugin.saveSettings();
-				})
-		);
-		setting.addDropdown((dropdown) => {
-			dropdown.addOption("", "All files");
-			for (const f of folders) {
-				dropdown.addOption(f, f);
-			}
-			dropdown.setValue(stat.folder);
-			dropdown.onChange(async (value) => {
-				this.plugin.settings.stats[index].folder = value;
-				await this.saveAndRefresh();
+		// Row 1: label | metric | delete
+		const rowTop = wrap.createDiv({ cls: "nexus-stat-entry-row" });
+
+		const labelField = rowTop.createDiv({ cls: "nexus-stat-entry-label" });
+		new TextComponent(labelField)
+			.setPlaceholder("Label")
+			.setValue(stat.label)
+			.onChange(async (value) => {
+				this.plugin.settings.stats[index].label = value;
+				await this.plugin.saveSettings();
 			});
+
+		const metricField = rowTop.createDiv({ cls: "nexus-stat-entry-metric" });
+		new DropdownComponent(metricField)
+			.addOption("files", "Files")
+			.addOption("notes", "Notes")
+			.addOption("size", "Size")
+			.addOption("tags", "Tags")
+			.setValue(stat.metric ?? "files")
+			.onChange(async (value) => {
+				this.plugin.settings.stats[index].metric = value as StatMetric;
+				await this.plugin.saveSettings();
+				updateSummary();
+			});
+
+		const deleteField = rowTop.createDiv({ cls: "nexus-stat-entry-delete" });
+		new ExtraButtonComponent(deleteField)
+			.setIcon("trash")
+			.setTooltip("Remove")
+			.onClick(async () => {
+				new ConfirmModal(
+					this.app,
+					`Remove stat "${stat.label}"?`,
+					"This stat will be removed from the dashboard.",
+					async () => {
+						this.plugin.settings.stats.splice(index, 1);
+						await this.saveAndRefresh();
+					},
+				).open();
+			});
+
+		// Row 2: filter | scope | recursion
+		const rowBottom = wrap.createDiv({ cls: "nexus-stat-entry-row" });
+
+		const filterField = rowBottom.createDiv({ cls: "nexus-stat-entry-filter" });
+		const filterDropdown = new DropdownComponent(filterField).addOption("", "All files");
+		for (const f of folders) {
+			filterDropdown.addOption(f, f);
+		}
+		filterDropdown.setValue(stat.folder).onChange(async (value) => {
+			this.plugin.settings.stats[index].folder = value;
+			await this.plugin.saveSettings();
+			updateSummary();
 		});
-		setting.addExtraButton((btn) =>
-			btn
-				.setIcon("trash")
-				.setTooltip("Remove")
-				.onClick(async () => {
-					this.plugin.settings.stats.splice(index, 1);
-					await this.saveAndRefresh();
-				})
-		);
+
+		const scopeField = rowBottom.createDiv({ cls: "nexus-stat-entry-scope" });
+		new DropdownComponent(scopeField)
+			.addOption("all", "All time")
+			.addOption("today", "Today")
+			.addOption("week", "This week")
+			.addOption("month", "This month")
+			.addOption("year", "This year")
+			.setValue(stat.scope ?? "all")
+			.onChange(async (value) => {
+				this.plugin.settings.stats[index].scope = value as StatScope;
+				await this.plugin.saveSettings();
+				updateSummary();
+			});
+
+		const recursiveField = rowBottom.createDiv({ cls: "nexus-stat-entry-recursive" });
+		const recursive = stat.recursive ?? true;
+		new DropdownComponent(recursiveField)
+			.addOption("recursive", "Incl. subfolders")
+			.addOption("direct", "Direct only")
+			.setValue(recursive ? "recursive" : "direct")
+			.onChange(async (value) => {
+				this.plugin.settings.stats[index].recursive = value === "recursive";
+				await this.plugin.saveSettings();
+				updateSummary();
+			});
+
+		const summary = wrap.createEl("div", { cls: "nexus-stat-entry-summary" });
+		const updateSummary = (): void => {
+			const text = statSummary(stat);
+			summary.setText(text);
+			summary.setAttr("title", text);
+		};
+		updateSummary();
 	}
 
 	// ── Divider preview ───────────────────────────────────────
@@ -2218,7 +1915,10 @@ export class NexusSettingTab extends PluginSettingTab {
 		lineLeft.style.background = d.gradient;
 		lineLeft.style.height = d.lineWidth;
 
-		const labelEl = row.createEl("span", { cls: "nexus-settings-divider-preview-label", text: labelText || "DIVIDER" });
+		const labelEl = row.createEl("span", {
+			cls: "nexus-settings-divider-preview-label",
+			text: labelText || "DIVIDER",
+		});
 		labelEl.style.fontSize = d.labelSize;
 		labelEl.style.fontWeight = d.labelWeight;
 		labelEl.style.color = d.labelColor;
@@ -2229,12 +1929,1034 @@ export class NexusSettingTab extends PluginSettingTab {
 		lineRight.style.height = d.lineWidth;
 	}
 
+	// ── Component cards ──────────────────────────────────────
+
+	private renderComponentCardHeader(
+		containerEl: HTMLElement,
+		id: string,
+		title: string,
+		description: string,
+		enabled: boolean,
+	): { card: HTMLElement; header: HTMLElement; body: HTMLElement | null; isCollapsed: boolean } {
+		const isCollapsed = this.isCollapsed(NexusSettingTab.collapseKey("component", id));
+
+		const card = containerEl.createDiv({ cls: "nexus-component-card" });
+		if (!enabled) card.classList.add("is-disabled");
+
+		const header = card.createDiv({ cls: "nexus-component-card-header" });
+
+		const chevron = header.createDiv({
+			cls: `nexus-component-card-chevron ${isCollapsed ? "collapsed" : ""}`,
+		});
+		chevron.innerHTML = SVG.chevronDown;
+
+		const titleWrap = header.createDiv({ cls: "nexus-component-card-title" });
+		titleWrap.createEl("span", { text: title, cls: "nexus-component-card-title-text" });
+		titleWrap.createEl("span", { text: description, cls: "nexus-component-card-title-desc" });
+
+		return {
+			card,
+			header,
+			body: isCollapsed ? null : card.createDiv({ cls: "nexus-component-card-body" }),
+			isCollapsed,
+		};
+	}
+
+	private renderComponentCard(
+		containerEl: HTMLElement,
+		id: string,
+		title: string,
+		description: string,
+		enabled: boolean,
+		dividerSettings: DividerControlSettings | null,
+		onToggle: (value: boolean) => Promise<void>,
+		renderBody: (bodyEl: HTMLElement) => void,
+	): void {
+		const { header, body, isCollapsed } = this.renderComponentCardHeader(
+			containerEl,
+			id,
+			title,
+			description,
+			enabled,
+		);
+
+		const toggleEl = header.createDiv({ cls: "nexus-component-card-toggle" });
+		const toggle = new ToggleComponent(toggleEl);
+		toggle.setValue(enabled);
+		toggle.onChange(async (value) => {
+			await onToggle(value);
+			this.display();
+		});
+
+		header.addEventListener("click", (e) => {
+			if (toggleEl.contains(e.target as Node)) return;
+			this.setCollapsed(NexusSettingTab.collapseKey("component", id), !isCollapsed);
+			void this.plugin.saveSettings();
+			this.display();
+		});
+
+		if (!body) return;
+
+		if (dividerSettings) {
+			this.renderDividerControl(body, dividerSettings);
+		}
+
+		renderBody(body);
+	}
+
+	private renderDividerControl(parent: HTMLElement, settings: DividerControlSettings): void {
+		const group = parent.createDiv({ cls: "nexus-settings-subgroup" });
+
+		let labelInput: TextComponent | null = null;
+
+		new Setting(group)
+			.setName("Show divider")
+			.setDesc("Show a divider above this component. Text shown inside the divider.")
+			.addToggle((toggle) =>
+				toggle.setValue(settings.show).onChange(async (value) => {
+					await settings.onShow(value);
+					labelInput?.setDisabled(!value);
+				}),
+			)
+			.addText((text) => {
+				labelInput = text
+					.setPlaceholder(settings.labelPlaceholder)
+					.setValue(settings.label)
+					.setDisabled(!settings.show)
+					.onChange(async (value) => {
+						await settings.onLabel(value);
+					});
+			});
+	}
+
+	private renderSubgroup(parent: HTMLElement, title: string): HTMLElement {
+		const group = parent.createDiv({ cls: "nexus-settings-subgroup" });
+		group.createEl("div", { text: title, cls: "nexus-settings-subgroup-title" });
+		return group;
+	}
+
+	// ── Component sections ───────────────────────────────────
+
+	private renderMocCardsSection(containerEl: HTMLElement): void {
+		this.renderComponentCard(
+			containerEl,
+			"moc-cards",
+			"MOC Cards",
+			"Map of content cards",
+			this.plugin.settings.showMocCards,
+			{
+				show: this.plugin.settings.showMocDivider,
+				label: this.plugin.settings.mocDividerLabel,
+				labelPlaceholder: "MOC CARDS",
+				onShow: async (value) => {
+					this.plugin.settings.showMocDivider = value;
+					await this.plugin.saveSettings();
+				},
+				onLabel: async (value) => {
+					this.plugin.settings.mocDividerLabel = value || "MOC CARDS";
+					await this.plugin.saveSettings();
+				},
+			},
+			async (value) => {
+				this.plugin.settings.showMocCards = value;
+				await this.plugin.saveSettings();
+			},
+			(body) => {
+				body.createEl("p", {
+					text: "Configure the MOC cards shown on your dashboard.",
+					cls: "setting-item-description",
+				});
+
+				this.plugin.settings.mocs.forEach((moc, i) => {
+					this.renderMocCard(body, moc, i);
+				});
+
+				new Setting(body)
+					.setName("Add MOC card")
+					.setDesc("Add a new card to the dashboard grid.")
+					.addButton((btn) =>
+						btn
+							.setButtonText("+ Add MOC")
+							.setCta()
+							.onClick(async () => {
+								this.plugin.settings.mocs.push({
+									path: "MOC/New MOC",
+									title: "New MOC",
+									desc: "Description here",
+									icon: "MOC",
+								});
+								await this.saveAndRefresh();
+							}),
+					);
+
+				new Setting(body)
+					.setName("MOC grid columns")
+					.setDesc("Number of columns for the MOC card grid")
+					.addSlider((slider) =>
+						slider
+							.setLimits(1, 4, 1)
+							.setValue(this.plugin.settings.mocGridColumns)
+							.setDynamicTooltip()
+							.onChange(async (value) => {
+								this.plugin.settings.mocGridColumns = value;
+								await this.plugin.saveSettings();
+							}),
+					);
+
+				new Setting(body)
+					.setName("Show graph links")
+					.setDesc("Inject graph wikilinks on empty code blocks (can be overridden per-block)")
+					.addToggle((toggle) =>
+						toggle.setValue(this.plugin.settings.showGraph).onChange(async (value) => {
+							this.plugin.settings.showGraph = value;
+							await this.plugin.saveSettings();
+						}),
+					);
+			},
+		);
+	}
+
+	private renderStatsSection(containerEl: HTMLElement): void {
+		this.renderComponentCard(
+			containerEl,
+			"stats",
+			"Stats",
+			"Vault statistics counters",
+			this.plugin.settings.showStats,
+			null,
+			async (value) => {
+				this.plugin.settings.showStats = value;
+				await this.plugin.saveSettings();
+			},
+			(body) => {
+				body.createEl("p", {
+					text: "Configure the stat counters shown on the dashboard.",
+					cls: "setting-item-description",
+				});
+
+				this.plugin.settings.stats.forEach((stat, i) => {
+					try {
+						this.renderStatEntry(body, stat, i);
+					} catch (err) {
+						// eslint-disable-next-line no-console -- error guard; one bad entry shouldn't blank the tab
+						console.error("[NEXUS] Failed to render stat entry:", err);
+					}
+				});
+
+				new Setting(body)
+					.setName("Add stat")
+					.setDesc("Add a new stat counter")
+					.addButton((btn) =>
+						btn
+							.setButtonText("+ Add Stat")
+							.setCta()
+							.onClick(async () => {
+								this.plugin.settings.stats.push({
+									folder: "",
+									label: "New Stat",
+									metric: "files",
+									scope: "all",
+									recursive: true,
+								});
+								await this.saveAndRefresh();
+							}),
+					);
+
+				// ── New Note button ─────────────────────
+				const nnGroup = this.renderSubgroup(body, "New Note button");
+
+				new Setting(nnGroup)
+					.setName("Show button")
+					.setDesc('Show a "+ New Note" button next to the stats.')
+					.addToggle((toggle) =>
+						toggle.setValue(this.plugin.settings.statsNewNote.enabled).onChange(async (value) => {
+							this.plugin.settings.statsNewNote.enabled = value;
+							await this.plugin.saveSettings();
+						}),
+					);
+
+				new Setting(nnGroup)
+					.setName("Button label")
+					.setDesc(
+						"Text shown on the button. New notes are named with today's date (e.g. 2026-08-06.md).",
+					)
+					.addText((text) =>
+						text
+							.setPlaceholder("+ New Note")
+							.setValue(this.plugin.settings.statsNewNote.label)
+							.onChange(async (value) => {
+								this.plugin.settings.statsNewNote.label = value || "+ New Note";
+								await this.plugin.saveSettings();
+							}),
+					);
+
+				const folders = getVaultFolders(this.app);
+				new Setting(nnGroup)
+					.setName("Create note in")
+					.setDesc("Folder for new notes (e.g. Journal, Inbox). Blank = vault root.")
+					.addDropdown((dropdown) => {
+						dropdown.addOption("", "Vault root");
+						for (const f of folders) {
+							dropdown.addOption(f, f);
+						}
+						dropdown.setValue(this.plugin.settings.statsNewNote.folder);
+						dropdown.onChange(async (value) => {
+							this.plugin.settings.statsNewNote.folder = value;
+							await this.plugin.saveSettings();
+						});
+					});
+
+				new Setting(nnGroup)
+					.setName("Template file")
+					.setDesc("Optional template applied to new notes. Blank = empty note.")
+					.addText((text) =>
+						text
+							.setPlaceholder("Templates/Daily Note")
+							.setValue(this.plugin.settings.statsNewNote.template)
+							.onChange(async (value) => {
+								this.plugin.settings.statsNewNote.template = value.trim();
+								await this.plugin.saveSettings();
+							}),
+					);
+
+				// ── Copy DSL ─────────────────────────────
+				new Setting(body)
+					.setName("Copy as code block")
+					.setDesc("Copy your current stats configuration as a dashboard code block.")
+					.addButton((btn) =>
+						btn.setButtonText("Copy").onClick(() => {
+							copy(this.buildStatsDsl());
+							new Notice("Nexus Dashboard: stats code block copied");
+						}),
+					);
+			},
+		);
+	}
+
+	private buildStatsDsl(): string {
+		const opts = this.plugin.settings;
+		const lines: string[] = ["stats:", "  show: true"];
+		for (const s of opts.stats) {
+			lines.push(`  - label: "${s.label}"`);
+			lines.push(`    path: "${s.folder}"`);
+			lines.push(`    metric: ${s.metric ?? "files"}`);
+			lines.push(`    scope: ${s.scope ?? "all"}`);
+			lines.push(`    recursive: ${s.recursive ?? true}`);
+		}
+		const nn = opts.statsNewNote;
+		if (nn?.enabled) {
+			lines.push(`  new-note: true`);
+			if (nn.folder) lines.push(`  new-note-folder: "${nn.folder}"`);
+			if (nn.template) lines.push(`  new-note-template: "${nn.template}"`);
+			if (nn.label && nn.label !== "+ New Note") {
+				lines.push(`  new-note-label: "${nn.label}"`);
+			}
+		}
+		return lines.join("\n");
+	}
+
+	private renderSearchSection(containerEl: HTMLElement): void {
+		this.renderComponentCard(
+			containerEl,
+			"search",
+			"Search",
+			"Vault-wide search bar",
+			this.plugin.settings.showSearch,
+			null,
+			async (value) => {
+				this.plugin.settings.showSearch = value;
+				await this.plugin.saveSettings();
+			},
+			(body) => {
+				new Setting(body)
+					.setName("Search default")
+					.setDesc("Default search scope")
+					.addDropdown((dropdown) => {
+						dropdown.addOption("vault", "Vault");
+						dropdown.addOption("cards", "Cards");
+						dropdown.setValue(this.plugin.settings.searchDefault);
+						dropdown.onChange(async (value) => {
+							this.plugin.settings.searchDefault = value as "vault" | "cards";
+							await this.plugin.saveSettings();
+						});
+					});
+			},
+		);
+	}
+
+	private renderVaultActivitySection(containerEl: HTMLElement): void {
+		this.renderComponentCard(
+			containerEl,
+			"vault-activity",
+			"Vault Activity",
+			"Terminal-style file lists",
+			this.plugin.settings.showVaultActivity,
+			{
+				show: this.plugin.settings.showVaultActivityDivider,
+				label: this.plugin.settings.vaultActivityLabel,
+				labelPlaceholder: "VAULT ACTIVITY",
+				onShow: async (value) => {
+					this.plugin.settings.showVaultActivityDivider = value;
+					await this.plugin.saveSettings();
+				},
+				onLabel: async (value) => {
+					this.plugin.settings.vaultActivityLabel = value;
+					await this.plugin.saveSettings();
+				},
+			},
+			async (value) => {
+				this.plugin.settings.showVaultActivity = value;
+				await this.plugin.saveSettings();
+			},
+			(body) => {
+				body.createEl("p", {
+					text:
+						"Show a terminal-style list of files. Pick a preset per slot; a slot with no list selected shows recently modified files from the whole vault. Leave a list's label empty to hide its header.",
+					cls: "setting-item-description",
+				});
+
+				const defaultGroup = this.renderSubgroup(body, "Default list");
+				new Setting(defaultGroup)
+					.setName("Count")
+					.setDesc("Number of files shown in slots with no list selected")
+					.addSlider((slider) =>
+						slider
+							.setLimits(3, 50, 1)
+							.setValue(this.plugin.settings.vaultActivityCount)
+							.setDynamicTooltip()
+							.onChange(async (value) => {
+								this.plugin.settings.vaultActivityCount = value;
+								await this.plugin.saveSettings();
+							}),
+					);
+
+				new Setting(defaultGroup)
+					.setName("Show fade mask")
+					.setDesc("Fade the bottom of the list to hint at more content")
+					.addToggle((toggle) =>
+						toggle.setValue(this.plugin.settings.vaultActivityShowFade).onChange(async (value) => {
+							this.plugin.settings.vaultActivityShowFade = value;
+							await this.plugin.saveSettings();
+						}),
+					);
+
+				new Setting(defaultGroup)
+					.setName("Maximum list height")
+					.setDesc("Max height of the list before scrolling (120–800px)")
+					.addSlider((slider) =>
+						slider
+							.setLimits(120, 800, 10)
+							.setValue(this.plugin.settings.vaultActivityMaxHeight)
+							.setDynamicTooltip()
+							.onChange(async (value) => {
+								this.plugin.settings.vaultActivityMaxHeight = value;
+								await this.plugin.saveSettings();
+							}),
+					);
+
+				const listsGroup = this.renderSubgroup(body, "Vault lists");
+				this.plugin.settings.vaultLists.forEach((vl, i) => {
+					this.renderVaultListEntry(listsGroup, vl, i);
+				});
+
+				new Setting(listsGroup)
+					.setName("Add vault activity list")
+					.setDesc("Add a new named vault activity preset for use in layout slots.")
+					.addButton((btn) =>
+						btn
+							.setButtonText("+ Add List")
+							.setCta()
+							.onClick(async () => {
+								this.plugin.settings.vaultLists.push({
+									name: "New List",
+									path: "",
+									tags: "",
+									count: this.plugin.settings.vaultActivityCount,
+									label: "",
+								});
+								await this.saveAndRefresh();
+							}),
+					);
+			},
+		);
+	}
+
+	private renderQuickLinksSection(containerEl: HTMLElement): void {
+		this.renderComponentCard(
+			containerEl,
+			"quick-links",
+			"Quick Links",
+			"Links to open instantly",
+			this.plugin.settings.showQuickLinks,
+			null,
+			async (value) => {
+				this.plugin.settings.showQuickLinks = value;
+				await this.plugin.saveSettings();
+			},
+			(body) => {
+				this.renderQuickLinksEditor(body);
+
+				this.plugin.settings.showBookmarksAsLinks ??= false;
+				new Setting(body)
+					.setName("Show Obsidian bookmarks")
+					.setDesc("Display items from the built-in Bookmarks plugin as quick links on the dashboard.")
+					.addToggle((toggle) =>
+						toggle.setValue(this.plugin.settings.showBookmarksAsLinks).onChange(async (value) => {
+							this.plugin.settings.showBookmarksAsLinks = value;
+							await this.saveAndRefresh();
+						}),
+					);
+			},
+		);
+	}
+
+	private renderHeatmapSection(containerEl: HTMLElement): void {
+		this.renderComponentCard(
+			containerEl,
+			"heatmap",
+			"Heatmap",
+			"GitHub-style contribution calendar",
+			this.plugin.settings.showHeatmap,
+			{
+				show: this.plugin.settings.showHeatmapDivider,
+				label: this.plugin.settings.heatmapLabel,
+				labelPlaceholder: "CONTRIBUTION ACTIVITY",
+				onShow: async (value) => {
+					this.plugin.settings.showHeatmapDivider = value;
+					await this.plugin.saveSettings();
+				},
+				onLabel: async (value) => {
+					this.plugin.settings.heatmapLabel = value;
+					await this.plugin.saveSettings();
+				},
+			},
+			async (value) => {
+				this.plugin.settings.showHeatmap = value;
+				await this.plugin.saveSettings();
+			},
+			(body) => {
+				new Setting(body)
+					.setName("Weeks")
+					.setDesc("Number of weeks to display (8–52)")
+					.addSlider((slider) =>
+						slider
+							.setLimits(8, 52, 1)
+							.setValue(this.plugin.settings.heatmapWeeks)
+							.setDynamicTooltip()
+							.onChange(async (value) => {
+								this.plugin.settings.heatmapWeeks = value;
+								await this.plugin.saveSettings();
+							}),
+					);
+			},
+		);
+	}
+
+	private renderActivityTimelineSection(containerEl: HTMLElement): void {
+		this.renderComponentCard(
+			containerEl,
+			"activity-timeline",
+			"Activity Timeline",
+			"Chronological log of vault activity",
+			this.plugin.settings.showActivityTimeline,
+			{
+				show: this.plugin.settings.showActivityTimelineDivider,
+				label: this.plugin.settings.activityTimelineLabel,
+				labelPlaceholder: "ACTIVITY",
+				onShow: async (value) => {
+					this.plugin.settings.showActivityTimelineDivider = value;
+					await this.plugin.saveSettings();
+				},
+				onLabel: async (value) => {
+					this.plugin.settings.activityTimelineLabel = value;
+					await this.plugin.saveSettings();
+				},
+			},
+			async (value) => {
+				this.plugin.settings.showActivityTimeline = value;
+				await this.plugin.saveSettings();
+			},
+			(body) => {
+				const displayGroup = this.renderSubgroup(body, "Display");
+				new Setting(displayGroup)
+					.setName("Number of entries")
+					.setDesc("How many activity entries to show")
+					.addSlider((slider) =>
+						slider
+							.setLimits(5, 50, 1)
+							.setValue(this.plugin.settings.activityTimelineCount)
+							.setDynamicTooltip()
+							.onChange(async (value) => {
+								this.plugin.settings.activityTimelineCount = value;
+								await this.plugin.saveSettings();
+							}),
+					);
+
+				const listGroup = this.renderSubgroup(body, "List appearance");
+				new Setting(listGroup)
+					.setName("Show fade mask")
+					.setDesc("Fade the bottom of the list to hint at more content")
+					.addToggle((toggle) =>
+						toggle.setValue(this.plugin.settings.activityTimelineShowFade).onChange(async (value) => {
+							this.plugin.settings.activityTimelineShowFade = value;
+							await this.plugin.saveSettings();
+						}),
+					);
+
+				new Setting(listGroup)
+					.setName("Maximum list height")
+					.setDesc("Max height of the list before scrolling (120–800px)")
+					.addSlider((slider) =>
+						slider
+							.setLimits(120, 800, 10)
+							.setValue(this.plugin.settings.activityTimelineMaxHeight)
+							.setDynamicTooltip()
+							.onChange(async (value) => {
+								this.plugin.settings.activityTimelineMaxHeight = value;
+								await this.plugin.saveSettings();
+							}),
+					);
+
+				new Setting(listGroup)
+					.setName("Relative times")
+					.setDesc('Show "3m ago" instead of clock times')
+					.addToggle((toggle) =>
+						toggle.setValue(this.plugin.settings.activityTimelineShowRelative).onChange(async (value) => {
+							this.plugin.settings.activityTimelineShowRelative = value;
+							await this.plugin.saveSettings();
+						}),
+					);
+
+				new Setting(listGroup)
+					.setName("Show date separators")
+					.setDesc('Show "Today" / "Yesterday" / date headings')
+					.addToggle((toggle) =>
+						toggle.setValue(this.plugin.settings.activityTimelineShowDate).onChange(async (value) => {
+							this.plugin.settings.activityTimelineShowDate = value;
+							await this.plugin.saveSettings();
+						}),
+					);
+
+				new Setting(listGroup)
+					.setName("Show filter chips")
+					.setDesc("Show interactive action filter chips above the list")
+					.addToggle((toggle) =>
+						toggle.setValue(this.plugin.settings.activityTimelineShowChips).onChange(async (value) => {
+							this.plugin.settings.activityTimelineShowChips = value;
+							await this.plugin.saveSettings();
+						}),
+					);
+
+				new Setting(listGroup)
+					.setName('Show "load more" button')
+					.setDesc("Show a button to load more entries beyond the count")
+					.addToggle((toggle) =>
+						toggle.setValue(this.plugin.settings.activityTimelineShowMore).onChange(async (value) => {
+							this.plugin.settings.activityTimelineShowMore = value;
+							await this.plugin.saveSettings();
+						}),
+					);
+
+				new Setting(listGroup)
+					.setName("Group by")
+					.setDesc("Group timeline entries by day or by file")
+					.addDropdown((dropdown) => {
+						dropdown.addOption("day", "Day");
+						dropdown.addOption("file", "File");
+						dropdown.setValue(this.plugin.settings.activityTimelineGroup);
+						dropdown.onChange(async (value) => {
+							this.plugin.settings.activityTimelineGroup = value as "day" | "file";
+							await this.plugin.saveSettings();
+						});
+					});
+
+				const filterGroup = this.renderSubgroup(body, "Filtering");
+				new Setting(filterGroup)
+					.setName("Only markdown")
+					.setDesc("Only show activity for markdown files")
+					.addToggle((toggle) =>
+						toggle.setValue(this.plugin.settings.activityTimelineOnlyMarkdown).onChange(async (value) => {
+							this.plugin.settings.activityTimelineOnlyMarkdown = value;
+							await this.plugin.saveSettings();
+						}),
+					);
+
+				new Setting(filterGroup)
+					.setName("Include folders")
+					.setDesc("Restrict to these folder paths (comma-separated). Empty shows everything.")
+					.addText((text) =>
+						text
+							.setPlaceholder("Journal, Projects")
+							.setValue(this.plugin.settings.activityTimelineIncludeFolders)
+							.onChange(async (value) => {
+								this.plugin.settings.activityTimelineIncludeFolders = value;
+								await this.plugin.saveSettings();
+							}),
+					);
+
+				const trackingGroup = this.renderSubgroup(body, "Tracking");
+				new Setting(trackingGroup)
+					.setName("Enable activity tracking")
+					.setDesc("Record vault file/folder events and persist them to data.json")
+					.addToggle((toggle) =>
+						toggle.setValue(this.plugin.settings.activityTrackingEnabled).onChange(async (value) => {
+							this.plugin.settings.activityTrackingEnabled = value;
+							await this.plugin.saveSettings();
+						}),
+					);
+
+				new Setting(trackingGroup)
+					.setName("Track task checkboxes")
+					.setDesc("Record when a task checkbox is toggled")
+					.addToggle((toggle) =>
+						toggle.setValue(this.plugin.settings.activityTaskTracking).onChange(async (value) => {
+							this.plugin.settings.activityTaskTracking = value;
+							await this.plugin.saveSettings();
+						}),
+					);
+
+				new Setting(trackingGroup)
+					.setName("Log size")
+					.setDesc("Maximum number of events kept in the activity log (50–5000)")
+					.addSlider((slider) =>
+						slider
+							.setLimits(50, 5000, 50)
+							.setValue(this.plugin.settings.activityLogMax)
+							.setDynamicTooltip()
+							.onChange(async (value) => {
+								this.plugin.settings.activityLogMax = value;
+								await this.plugin.saveSettings();
+							}),
+					);
+
+				new Setting(trackingGroup)
+					.setName("Clear activity log")
+					.setDesc("Remove all recorded activity events")
+					.addButton((button) =>
+						button
+							.setButtonText("Clear")
+							.setWarning()
+							.onClick(() => {
+								this.plugin.clearActivityLog();
+							}),
+					);
+			},
+		);
+	}
+
+	private renderClockSection(containerEl: HTMLElement): void {
+		this.renderComponentCard(
+			containerEl,
+			"clock",
+			"Clock",
+			"Real-time digital clock",
+			this.plugin.settings.showClock,
+			{
+				show: this.plugin.settings.showClockDivider,
+				label: this.plugin.settings.clockLabel,
+				labelPlaceholder: "CLOCK",
+				onShow: async (value) => {
+					this.plugin.settings.showClockDivider = value;
+					await this.plugin.saveSettings();
+				},
+				onLabel: async (value) => {
+					this.plugin.settings.clockLabel = value;
+					await this.plugin.saveSettings();
+				},
+			},
+			async (value) => {
+				this.plugin.settings.showClock = value;
+				await this.plugin.saveSettings();
+			},
+			(body) => {
+				new Setting(body)
+					.setName("Timezone")
+					.setDesc("IANA timezone (e.g. America/New_York). Leave empty for local time.")
+					.addText((text) =>
+						text
+							.setPlaceholder("Local time")
+							.setValue(this.plugin.settings.clockTimezone)
+							.onChange(async (value) => {
+								this.plugin.settings.clockTimezone = value;
+								await this.plugin.saveSettings();
+							}),
+					);
+
+				new Setting(body)
+					.setName("Show date")
+					.setDesc("Show the date below the time")
+					.addToggle((toggle) =>
+						toggle.setValue(this.plugin.settings.clockShowDate).onChange(async (value) => {
+							this.plugin.settings.clockShowDate = value;
+							await this.plugin.saveSettings();
+						}),
+					);
+
+				new Setting(body)
+					.setName("Show seconds")
+					.setDesc("Show seconds in the clock")
+					.addToggle((toggle) =>
+						toggle.setValue(this.plugin.settings.clockShowSeconds).onChange(async (value) => {
+							this.plugin.settings.clockShowSeconds = value;
+							await this.plugin.saveSettings();
+						}),
+					);
+
+				new Setting(body)
+					.setName("Format")
+					.setDesc("12-hour or 24-hour format")
+					.addDropdown((dropdown) => {
+						dropdown.addOption("12h", "12-hour");
+						dropdown.addOption("24h", "24-hour");
+						dropdown.setValue(this.plugin.settings.clockFormat);
+						dropdown.onChange(async (value) => {
+							this.plugin.settings.clockFormat = value as "12h" | "24h";
+							await this.plugin.saveSettings();
+						});
+					});
+			},
+		);
+	}
+
+	private renderFileTypesSection(containerEl: HTMLElement): void {
+		this.renderComponentCard(
+			containerEl,
+			"file-types",
+			"File Types",
+			"Horizontal bar chart of vault file types",
+			this.plugin.settings.showFileTypeChart,
+			{
+				show: this.plugin.settings.showFileTypeChartDivider,
+				label: this.plugin.settings.fileTypeChartLabel,
+				labelPlaceholder: "FILE TYPES",
+				onShow: async (value) => {
+					this.plugin.settings.showFileTypeChartDivider = value;
+					await this.plugin.saveSettings();
+				},
+				onLabel: async (value) => {
+					this.plugin.settings.fileTypeChartLabel = value;
+					await this.plugin.saveSettings();
+				},
+			},
+			async (value) => {
+				this.plugin.settings.showFileTypeChart = value;
+				await this.plugin.saveSettings();
+			},
+			(body) => {
+				new Setting(body)
+					.setName("Max types")
+					.setDesc("Maximum file types to display (3–15)")
+					.addSlider((slider) =>
+						slider
+							.setLimits(3, 15, 1)
+							.setValue(this.plugin.settings.fileTypeChartMax)
+							.setDynamicTooltip()
+							.onChange(async (value) => {
+								this.plugin.settings.fileTypeChartMax = value;
+								await this.plugin.saveSettings();
+							}),
+					);
+			},
+		);
+	}
+
+	private renderTaskSummarySection(containerEl: HTMLElement): void {
+		this.renderComponentCard(
+			containerEl,
+			"task-summary",
+			"Task Summary",
+			"Open/done tasks with progress",
+			this.plugin.settings.showTaskSummary,
+			{
+				show: this.plugin.settings.showTaskSummaryDivider,
+				label: this.plugin.settings.taskSummaryLabel,
+				labelPlaceholder: "TASKS",
+				onShow: async (value) => {
+					this.plugin.settings.showTaskSummaryDivider = value;
+					await this.plugin.saveSettings();
+				},
+				onLabel: async (value) => {
+					this.plugin.settings.taskSummaryLabel = value;
+					await this.plugin.saveSettings();
+				},
+			},
+			async (value) => {
+				this.plugin.settings.showTaskSummary = value;
+				await this.plugin.saveSettings();
+			},
+			(body) => {
+				const viewGroup = this.renderSubgroup(body, "Display");
+				new Setting(viewGroup)
+					.setName("Show progress bar")
+					.setDesc("Show a progress bar below the stats counters")
+					.addToggle((toggle) =>
+						toggle.setValue(this.plugin.settings.taskSummaryShowProgress).onChange(async (value) => {
+							this.plugin.settings.taskSummaryShowProgress = value;
+							await this.plugin.saveSettings();
+						}),
+					);
+
+				new Setting(viewGroup)
+					.setName("Show task list")
+					.setDesc("Show a scrollable list of unchecked tasks")
+					.addToggle((toggle) =>
+						toggle.setValue(this.plugin.settings.taskSummaryShowList).onChange(async (value) => {
+							this.plugin.settings.taskSummaryShowList = value;
+							await this.plugin.saveSettings();
+						}),
+					);
+
+				new Setting(viewGroup)
+					.setName("Show fade mask")
+					.setDesc("Fade the bottom of the list to hint at more content")
+					.addToggle((toggle) =>
+						toggle.setValue(this.plugin.settings.taskSummaryShowFade).onChange(async (value) => {
+							this.plugin.settings.taskSummaryShowFade = value;
+							await this.plugin.saveSettings();
+						}),
+					);
+
+				new Setting(viewGroup)
+					.setName("Maximum list height")
+					.setDesc("Max height of the list before scrolling (120–800px)")
+					.addSlider((slider) =>
+						slider
+							.setLimits(120, 800, 10)
+							.setValue(this.plugin.settings.taskSummaryMaxHeight)
+							.setDynamicTooltip()
+							.onChange(async (value) => {
+								this.plugin.settings.taskSummaryMaxHeight = value;
+								await this.plugin.saveSettings();
+							}),
+					);
+
+				const filterGroup = this.renderSubgroup(body, "Filtering");
+				new Setting(filterGroup)
+					.setName("Folder filter")
+					.setDesc("Only count tasks in this vault folder (leave empty for all)")
+					.addText((text) =>
+						text
+							.setPlaceholder("Knowledge/Tasks & Action Management")
+							.setValue(this.plugin.settings.taskSummaryPath)
+							.onChange(async (value) => {
+								this.plugin.settings.taskSummaryPath = value;
+								await this.plugin.saveSettings();
+							}),
+					);
+
+				new Setting(filterGroup)
+					.setName("Tag filter")
+					.setDesc("Comma-separated frontmatter tags to filter task files (leave empty for all)")
+					.addText((text) =>
+						text
+							.setPlaceholder("todo, tasks")
+							.setValue(this.plugin.settings.taskSummaryTags)
+							.onChange(async (value) => {
+								this.plugin.settings.taskSummaryTags = value;
+								await this.plugin.saveSettings();
+							}),
+					);
+
+				new Setting(filterGroup)
+					.setName("Max tasks in list")
+					.setDesc("Maximum number of tasks to display in the list (5–30)")
+					.addSlider((slider) =>
+						slider
+							.setLimits(5, 30, 1)
+							.setValue(this.plugin.settings.taskSummaryCount)
+							.setDynamicTooltip()
+							.onChange(async (value) => {
+								this.plugin.settings.taskSummaryCount = value;
+								await this.plugin.saveSettings();
+							}),
+					);
+			},
+		);
+	}
+
+	private renderDividerStyleSection(containerEl: HTMLElement): void {
+		const { header, body, isCollapsed } = this.renderComponentCardHeader(
+			containerEl,
+			"divider-style",
+			"Divider Style",
+			"Global appearance of section dividers",
+			true,
+		);
+
+		header.addEventListener("click", () => {
+			this.setCollapsed(NexusSettingTab.collapseKey("component", "divider-style"), !isCollapsed);
+			void this.plugin.saveSettings();
+			this.display();
+		});
+
+		if (!body) return;
+
+		body.createEl("p", {
+			text: "Customize the appearance of section dividers. Labels are configured per component above.",
+			cls: "setting-item-description",
+		});
+
+		const currentPreset = detectDividerPreset(this.plugin.settings.dividerDesign);
+		new Setting(body)
+			.setName("Divider style")
+			.setDesc("Choose a divider style preset")
+			.addDropdown((dropdown) => {
+				for (const [key, name] of Object.entries(DIVIDER_PRESET_NAMES)) {
+					dropdown.addOption(key, name);
+				}
+				dropdown.addOption("custom", "Custom…");
+				dropdown.setValue(currentPreset);
+				dropdown.onChange(async (value) => {
+					if (value === "custom") {
+						await this.plugin.saveSettings();
+						this.display();
+						return;
+					}
+					const preset = DIVIDER_PRESETS[value];
+					if (preset) {
+						this.plugin.settings.dividerDesign = { ...preset };
+						await this.plugin.saveSettings();
+						this.renderDividerPreview(dividerPreviewEl);
+					}
+				});
+			});
+
+		const dividerPreviewEl = body.createDiv();
+		this.renderDividerPreview(dividerPreviewEl);
+
+		// Custom style fields when no preset matches
+		if (currentPreset === "custom") {
+			const customGroup = this.renderSubgroup(body, "Custom style");
+			const dd = this.plugin.settings.dividerDesign;
+			const customFields: [string, string, keyof DividerDesign][] = [
+				["Gradient", "CSS background (e.g. linear-gradient(90deg, #333, transparent))", "gradient"],
+				["Line width", "CSS height (e.g. 2px)", "lineWidth"],
+				["Label size", "CSS font-size (e.g. 0.75rem)", "labelSize"],
+				["Label weight", "CSS font-weight (e.g. 600)", "labelWeight"],
+				["Label color", "CSS color", "labelColor"],
+				["Label spacing", "CSS margin (e.g. 0 0 0.5rem)", "labelSpacing"],
+			];
+			for (const [label, desc, key] of customFields) {
+				new Setting(customGroup)
+					.setName(label)
+					.setDesc(desc)
+					.addText((text) =>
+						text.setValue(dd[key] || "").onChange(async (value) => {
+							(this.plugin.settings.dividerDesign as unknown as Record<string, string>)[key] = value;
+							await this.plugin.saveSettings();
+							this.renderDividerPreview(dividerPreviewEl);
+						}),
+					);
+			}
+		}
+	}
+
 	// ── Quick Links ─────────────────────────────────────────
 
 	/**
-	 * Compact dropdown-based quick links editor. One dropdown picks which link
-	 * to edit; the selected link's fields render inline below it. This keeps
-	 * the Components tab tight regardless of how many links exist.
+	 * MOC-style quick links editor. Each link is a heading row with a drag
+	 * handle, chevron, label and trash button. Click to expand/collapse; drag
+	 * to reorder; trash to delete. Mirrors MOC Cards.
 	 */
 	private renderQuickLinksEditor(containerEl: HTMLElement): void {
 		const links = this.plugin.settings.quickLinks;
@@ -2249,101 +2971,151 @@ export class NexusSettingTab extends PluginSettingTab {
 					.setCta()
 					.onClick(async () => {
 						this.addQuickLink();
-					})
+					}),
 			);
 			return;
 		}
 
-		if (this.selectedQuickLink >= links.length) {
-			this.selectedQuickLink = 0;
-		}
+		links.forEach((link, index) => {
+			const isCollapsed = this.isCollapsed(NexusSettingTab.collapseKey("quicklink", index));
 
-		const picker = new Setting(containerEl);
-		picker.setName("Quick link");
-		picker.setDesc("Select a link to edit its label and URL.");
-		picker.addDropdown((dropdown) => {
-			for (let i = 0; i < links.length; i++) {
-				dropdown.addOption(String(i), links[i].label || `Link ${i + 1}`);
-			}
-			dropdown.setValue(String(this.selectedQuickLink));
-			dropdown.onChange((value) => {
-				this.selectedQuickLink = safeParseInt(value, 0, 0) ?? 0;
+			const heading = containerEl.createDiv({ cls: "nexus-settings-moc-heading" });
+			const { titleWrap, actions } = this.setupDragAndDrop(
+				heading,
+				index,
+				this.plugin.settings.quickLinks,
+				this.isCollapsed(NexusSettingTab.collapseKey("quicklink", index)),
+				true,
+			);
+
+			// Title
+			titleWrap.createEl("span", { text: link.label || `Link ${index + 1}` });
+
+			// Delete button
+			const removeBtn = actions.createEl("button", {
+				cls: "nexus-settings-moc-btn--delete",
+				attr: { "aria-label": "Remove" },
+			});
+			setIcon(removeBtn, "trash");
+			removeBtn.addEventListener("click", async (e) => {
+				e.stopPropagation();
+				new ConfirmModal(
+					this.app,
+					`Remove "${link.label}"?`,
+					"This quick link will be removed from the dashboard.",
+					async () => {
+						this.plugin.settings.quickLinks.splice(index, 1);
+						await this.saveAndRefresh();
+					},
+				).open();
+			});
+
+			// Toggle collapse
+			heading.addEventListener("click", () => {
+				this.setCollapsed(NexusSettingTab.collapseKey("quicklink", index), !isCollapsed);
+				void this.plugin.saveSettings();
 				this.display();
 			});
-		});
-		picker.addButton((btn) =>
-			btn
-				.setButtonText("+ Add")
-				.setCta()
-				.setIcon("plus")
-				.onClick(async () => {
-					this.addQuickLink();
-				})
-		);
 
-		const index = this.selectedQuickLink;
-		const link = links[index];
-		const editor = containerEl.createDiv({ cls: "nexus-quicklinks-editor" });
+			if (isCollapsed) return;
 
-		new Setting(editor)
-			.setName("Label")
-			.addText((text) =>
+			new Setting(containerEl).setName("Label").addText((text) =>
 				text
 					.setPlaceholder("Google")
 					.setValue(link.label)
 					.onChange(async (value) => {
 						this.plugin.settings.quickLinks[index].label = value;
 						await this.plugin.saveSettings();
-					})
+					}),
 			);
 
-		new Setting(editor)
-			.setName("URL")
-			.addText((text) =>
+			new Setting(containerEl).setName("URL").addText((text) =>
 				text
 					.setPlaceholder("https://example.com")
 					.setValue(link.url)
 					.onChange(async (value) => {
 						this.plugin.settings.quickLinks[index].url = value;
 						await this.plugin.saveSettings();
-					})
+					}),
 			);
 
-		const actions = new Setting(editor);
-		actions.setName("Actions");
-		actions.addButton((btn) =>
-			btn
-				.setButtonText("Move up")
-				.setIcon("arrow-up")
-				.setDisabled(index === 0)
-				.onClick(async () => {
-					[links[index - 1], links[index]] = [links[index], links[index - 1]];
-					this.selectedQuickLink = index - 1;
-					await this.saveAndRefresh();
-				})
-		);
-		actions.addButton((btn) =>
-			btn
-				.setButtonText("Move down")
-				.setIcon("arrow-down")
-				.setDisabled(index === links.length - 1)
-				.onClick(async () => {
-					[links[index], links[index + 1]] = [links[index + 1], links[index]];
-					this.selectedQuickLink = index + 1;
-					await this.saveAndRefresh();
-				})
-		);
-		actions.addButton((btn) =>
-			btn
-				.setButtonText("Delete")
-				.setWarning()
-				.setIcon("trash")
-				.onClick(async () => {
-					this.plugin.settings.quickLinks.splice(index, 1);
-					this.selectedQuickLink = Math.max(0, this.plugin.settings.quickLinks.length - 1);
-					await this.saveAndRefresh();
-				})
-		);
+			// ── Icon picker (searchable, commits typed value) ──────
+			const iconSetting = new Setting(containerEl)
+				.setName("Icon")
+				.setDesc("Type to search, click to select");
+			const iconWrapper = iconSetting.settingEl.createDiv({ cls: "nexus-icon-picker-wrapper" });
+			const iconRow = iconWrapper.createDiv({ cls: "nexus-icon-picker-row" });
+			const iconPreview = iconRow.createDiv({ cls: "nexus-icon-picker-preview" });
+			iconPreview.innerHTML = SMALL_ICONS[link.icon] || SMALL_ICONS["Link"] || "";
+			const iconInput = iconRow.createEl("input", {
+				cls: "nexus-icon-picker-input",
+				attr: { type: "text", placeholder: "Search icons..." },
+			});
+			iconInput.value = link.icon;
+			const iconGrid = iconWrapper.createDiv({ cls: "nexus-icon-picker-grid" });
+
+			const renderLinkIconGrid = (filter: string) => {
+				iconGrid.empty();
+				const lower = filter.toLowerCase();
+				const matches = ICON_NAMES.filter((name) => name.toLowerCase().includes(lower));
+				for (const name of matches) {
+					const btn = iconGrid.createDiv({ cls: "nexus-icon-picker-item" });
+					if (name === iconInput.value) btn.classList.add("nexus-icon-picker-item-active");
+					btn.innerHTML = SMALL_ICONS[name] || "";
+					btn.createEl("span", { text: name, cls: "nexus-icon-picker-label" });
+					btn.addEventListener("click", () => {
+						iconInput.value = name;
+						iconPreview.innerHTML = SMALL_ICONS[name] || SMALL_ICONS["Link"] || "";
+						this.plugin.settings.quickLinks[index].icon = name;
+						void this.plugin.saveSettings();
+						iconGrid
+							.querySelectorAll(".nexus-icon-picker-item")
+							.forEach((el) => el.classList.remove("nexus-icon-picker-item-active"));
+						btn.classList.add("nexus-icon-picker-item-active");
+					});
+				}
+				if (matches.length === 0) {
+					iconGrid.createEl("div", { text: "No icons found", cls: "nexus-icon-picker-empty" });
+				}
+			};
+
+			renderLinkIconGrid("");
+			iconInput.addEventListener("input", () => renderLinkIconGrid(iconInput.value));
+			iconInput.addEventListener("focus", () => {
+				iconGrid.classList.add("nexus-icon-picker-grid-open");
+				renderLinkIconGrid(iconInput.value);
+			});
+			iconInput.addEventListener("blur", () => {
+				setTimeout(() => {
+					iconGrid.classList.remove("nexus-icon-picker-grid-open");
+				}, 200);
+			});
+			this.addIconPickerCommitBlur(iconInput, iconPreview, (value) => {
+				this.plugin.settings.quickLinks[index].icon = value;
+				void this.plugin.saveSettings();
+			});
+			iconInput.addEventListener("keydown", (e) => {
+				if (e.key === "Escape") iconInput.blur();
+				if (e.key === "Enter") {
+					this.plugin.settings.quickLinks[index].icon = iconInput.value;
+					void this.plugin.saveSettings();
+					iconInput.blur();
+				}
+			});
+		});
+
+		// "+ Add Link" button
+		new Setting(containerEl)
+			.setName("Add quick link")
+			.setDesc("Add a new link to the dashboard.")
+			.addButton((btn) =>
+				btn
+					.setButtonText("+ Add Link")
+					.setCta()
+					.onClick(async () => {
+						await this.addQuickLink();
+					}),
+			);
 	}
 
 	private async addQuickLink(): Promise<void> {
@@ -2352,7 +3124,6 @@ export class NexusSettingTab extends PluginSettingTab {
 			url: "https://example.com",
 			icon: "Link",
 		});
-		this.selectedQuickLink = this.plugin.settings.quickLinks.length - 1;
 		await this.saveAndRefresh();
 	}
 
@@ -2369,8 +3140,15 @@ export class NexusSettingTab extends PluginSettingTab {
 		});
 		setIcon(removeBtn, "trash");
 		removeBtn.addEventListener("click", async () => {
-			this.plugin.settings.vaultLists.splice(index, 1);
-			await this.saveAndRefresh();
+			new ConfirmModal(
+				this.app,
+				`Remove "${vl.name}"?`,
+				"This vault list will be removed from the dashboard.",
+				async () => {
+					this.plugin.settings.vaultLists.splice(index, 1);
+					await this.saveAndRefresh();
+				},
+			).open();
 		});
 
 		const grid = entry.createDiv({ cls: "nexus-vault-list-entry-grid" });
@@ -2382,7 +3160,8 @@ export class NexusSettingTab extends PluginSettingTab {
 			this.plugin.settings.vaultLists[index].tags = value;
 		});
 		this.addVaultListField(grid, "Count", String(vl.count), (value) => {
-			this.plugin.settings.vaultLists[index].count = safeParseInt(value, 9, 1) ?? 9;
+			const parsed = safeParseInt(value, undefined) ?? 9;
+			this.plugin.settings.vaultLists[index].count = Math.max(3, Math.min(50, parsed));
 		});
 		this.addVaultListField(grid, "Label", vl.label, (value) => {
 			this.plugin.settings.vaultLists[index].label = value;
@@ -2393,7 +3172,7 @@ export class NexusSettingTab extends PluginSettingTab {
 		parent: HTMLElement,
 		label: string,
 		value: string,
-		onValue: (value: string) => void
+		onValue: (value: string) => void,
 	): void {
 		const field = parent.createDiv({ cls: "nexus-vault-list-entry-field" });
 		field.createEl("label", { cls: "nexus-vault-list-entry-field-label", text: label });
@@ -2401,9 +3180,13 @@ export class NexusSettingTab extends PluginSettingTab {
 			cls: "nexus-vault-list-entry-input",
 			attr: { type: "text", value },
 		});
-		input.addEventListener("input", async () => {
+		let timer: ReturnType<typeof setTimeout> | null = null;
+		input.addEventListener("input", () => {
 			onValue(input.value);
-			await this.plugin.saveSettings();
+			if (timer) clearTimeout(timer);
+			timer = setTimeout(() => {
+				void this.plugin.saveSettings();
+			}, 200);
 		});
 	}
 }

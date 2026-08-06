@@ -1,10 +1,11 @@
 {
 	"name": "nexus-dashboard",
-	"version": "1.2.2-beta.1",
+	"version": "1.2.2-beta.2",
 	"description": "ASCII art banners + theme-aware dashboard for your vault.",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
-		"build": "node esbuild.config.mjs production",
+		"build": "npm run typecheck && node esbuild.config.mjs production",
+		"typecheck": "tsc --noEmit",
 		"lint": "eslint src/",
 		"format": "prettier --write src/",
 		"format:check": "prettier --check src/",

@@ -1,12 +1,39 @@
 /**
  * Union of all dashboard block types that can appear in the layout.
  */
-export type DashboardBlock = DividerBlockConfig | SectionConfig | VaultActivityConfig | RowConfig | ColumnConfig | LinksConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | HeatmapConfig | TimelineConfig | ClockConfig | FileTypeChartConfig | TaskSummaryConfig;
+export type DashboardBlock =
+	| DividerBlockConfig
+	| SectionConfig
+	| VaultActivityConfig
+	| RowConfig
+	| ColumnConfig
+	| LinksConfig
+	| StatsBlockConfig
+	| SearchBlockConfig
+	| HeadingBlockConfig
+	| HeatmapConfig
+	| TimelineConfig
+	| ClockConfig
+	| FileTypeChartConfig
+	| TaskSummaryConfig;
 
 /**
  * Valid identifiers for named content slots used in row and column layouts.
  */
-export type ContentSlotType = "stats" | "search" | "heading" | "moc-cards" | "quick-links" | "vault-activity" | "divider" | "heatmap" | "timeline" | "clock" | "filetypes" | "tasks" | "none";
+export type ContentSlotType =
+	| "stats"
+	| "search"
+	| "heading"
+	| "moc-cards"
+	| "quick-links"
+	| "vault-activity"
+	| "divider"
+	| "heatmap"
+	| "timeline"
+	| "clock"
+	| "filetypes"
+	| "tasks"
+	| "none";
 
 /** Root configuration object for the entire dashboard layout. */
 export interface DashboardConfig {
@@ -32,11 +59,19 @@ export interface HeaderConfig {
 	align?: "left" | "center" | "right";
 }
 
+/** Metric computed for a single stat counter. */
+export type StatMetric = "files" | "notes" | "size" | "tags";
+
+/** Time window used to filter files for a stat counter. */
+export type StatScope = "all" | "today" | "week" | "month" | "year";
+
 /** Configuration for the statistics counter section displayed at the top of the dashboard. */
 export interface StatsConfig {
 	enabled: boolean;
 	/** List of folder-based stat counters to display. */
 	items: StatItem[];
+	/** Optional "+ New Note" button rendered alongside the counters. */
+	newNote?: NewNoteConfig;
 }
 
 /** A single stat counter that counts notes in the given vault folder. */
@@ -44,6 +79,23 @@ export interface StatItem {
 	label: string;
 	/** Vault-relative folder path to count notes in (e.g. "Daily Notes"). */
 	folder: string;
+	/** Metric to compute for the folder. Defaults to `"files"`. */
+	metric?: StatMetric;
+	/** Time window to filter files by. Defaults to `"all"`. */
+	scope?: StatScope;
+	/** When `true`, include files in subfolders recursively. Defaults to `true`. */
+	recursive?: boolean;
+}
+
+/** Configuration for the "+ New Note" quick-create button. */
+export interface NewNoteConfig {
+	enabled: boolean;
+	/** Button text. */
+	label: string;
+	/** Vault-relative folder where new notes are created. */
+	folder: string;
+	/** Optional template file applied to new notes. */
+	template?: string;
 }
 
 /**
@@ -133,7 +185,20 @@ export interface RowConfig {
 	 * Ordered child blocks rendered left-to-right inside this row.
 	 * @remarks Cannot contain nested `RowConfig` — use `ColumnConfig` for nesting.
 	 */
-	children: (SectionConfig | ColumnConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | VaultActivityConfig | LinksConfig | HeatmapConfig | TimelineConfig | ClockConfig | FileTypeChartConfig | TaskSummaryConfig)[];
+	children: (
+		| SectionConfig
+		| ColumnConfig
+		| StatsBlockConfig
+		| SearchBlockConfig
+		| HeadingBlockConfig
+		| VaultActivityConfig
+		| LinksConfig
+		| HeatmapConfig
+		| TimelineConfig
+		| ClockConfig
+		| FileTypeChartConfig
+		| TaskSummaryConfig
+	)[];
 }
 
 /**
@@ -149,7 +214,20 @@ export interface ColumnConfig {
 	/**
 	 * Ordered child blocks rendered top-to-bottom inside this column.
 	 */
-	children: (SectionConfig | RowConfig | StatsBlockConfig | SearchBlockConfig | HeadingBlockConfig | VaultActivityConfig | LinksConfig | HeatmapConfig | TimelineConfig | ClockConfig | FileTypeChartConfig | TaskSummaryConfig)[];
+	children: (
+		| SectionConfig
+		| RowConfig
+		| StatsBlockConfig
+		| SearchBlockConfig
+		| HeadingBlockConfig
+		| VaultActivityConfig
+		| LinksConfig
+		| HeatmapConfig
+		| TimelineConfig
+		| ClockConfig
+		| FileTypeChartConfig
+		| TaskSummaryConfig
+	)[];
 }
 
 /** Configuration for the search bar widget. */
@@ -238,6 +316,9 @@ export interface ActivityEvent {
 	path: string;
 	/** Previous path (for `moved` / `renamed` / `folder-renamed` events). */
 	oldPath?: string;
+	/** File mtime (ms) at event time; set on `deleted` events so an external
+	 * rename (delete+create of a file with the same mtime) can be recovered. */
+	mtime?: number;
 	/** Extra context: task text, changed property keys, or event tag. */
 	detail?: string;
 }
@@ -384,6 +465,8 @@ export interface VaultListEntry {
  * per-slot overrides keyed by slot identifier.
  */
 export interface RowLayoutEntry {
+	/** Stable id used for collapse state and reordering. */
+	id?: string;
 	/** User-facing name for this layout in the settings UI. */
 	name: string;
 	columns: number;
@@ -409,6 +492,8 @@ export interface RowLayoutEntry {
  * Per-slot overrides follow the same keying convention as `RowLayoutEntry`.
  */
 export interface ColumnLayoutEntry {
+	/** Stable id used for collapse state and reordering. */
+	id?: string;
 	/** User-facing name for this layout in the settings UI. */
 	name: string;
 	/** CSS gap value between children (e.g. `"0.5rem"`). */
@@ -416,6 +501,8 @@ export interface ColumnLayoutEntry {
 	align: "left" | "center" | "right" | "stretch";
 	/** Ordered content slot assignments rendered top-to-bottom. */
 	slots: ContentSlotType[];
+	/** Per-slot heading overrides keyed by slot identifier. */
+	slotHeadings?: Record<string, HeadingConfig>;
 	/** Maps slot identifiers to vault-list names for vault-list slots. */
 	vaultListSlots?: Record<string, string>;
 	/** Maps slot identifiers to divider label overrides for divider slots. */
@@ -428,6 +515,24 @@ export interface StatEntry {
 	folder: string;
 	/** Display label next to the count (e.g. "Notes", "Projects"). */
 	label: string;
+	/** Metric to compute for the folder. Defaults to `"files"`. */
+	metric?: StatMetric;
+	/** Time window to filter files by. Defaults to `"all"`. */
+	scope?: StatScope;
+	/** When `true`, include files in subfolders recursively. Defaults to `true`. */
+	recursive?: boolean;
+}
+
+/** Persisted settings for the "+ New Note" quick-create button. */
+export interface NewNoteSettings {
+	/** Whether the button is shown. */
+	enabled: boolean;
+	/** Button text. */
+	label: string;
+	/** Vault-relative folder where new notes are created. */
+	folder: string;
+	/** Optional template file applied to new notes. */
+	template: string;
 }
 
 /** Visual styling configuration for divider lines rendered across the dashboard. */
@@ -460,16 +565,14 @@ export interface NexusSettings {
 	mocs: MocEntry[];
 	/** Stat-counter entries displayed in the header area. */
 	stats: StatEntry[];
+	/** Settings for the "+ New Note" button shown in the stats bar. */
+	statsNewNote: NewNoteSettings;
 	/** Whether the stats counter section is visible. */
 	showStats: boolean;
 	/** Whether the local graph view is visible. */
 	showGraph: boolean;
-	/** Vault-relative folder paths excluded from the graph and stats. */
-	excludeFolders: string[];
 	/** Number of grid columns for large MOC cards. */
 	mocGridColumns: number;
-	/** Number of grid columns for mini MOC cards. */
-	miniGridColumns: number;
 	/** Visual styling applied to all divider lines. */
 	dividerDesign: DividerDesign;
 	/** CSS font-family string for the ASCII header text. */
@@ -493,16 +596,14 @@ export interface NexusSettings {
 	 * keyed by layout name.
 	 */
 	rowSizes: Record<string, string>;
+	/** Persisted card-collapse state for the settings tabs, keyed by `scope:id`. */
+	collapseState: Record<string, boolean>;
 	/** Row layout templates available in the dashboard builder. */
 	rowLayouts: RowLayoutEntry[];
 	/** Column layout templates available in the dashboard builder. */
 	columnLayouts: ColumnLayoutEntry[];
 	/** Vault file-list entries displayed on the dashboard. */
 	vaultLists: VaultListEntry[];
-	/** Whether a divider is shown below the quick-links section. */
-	showQuickLinksDivider: boolean;
-	/** Label text for the divider below the quick-links section. */
-	quickLinksDividerLabel: string;
 	/** Whether the dashboard header is visible. */
 	showHeader: boolean;
 	/** Whether the MOC cards section is visible. */
@@ -517,18 +618,24 @@ export interface NexusSettings {
 	showBookmarksAsLinks: boolean;
 	/** Whether the heatmap calendar is visible. */
 	showHeatmap: boolean;
+	/** Whether a divider is shown above the heatmap section. */
+	showHeatmapDivider: boolean;
 	/** Number of weeks to display in the heatmap. */
 	heatmapWeeks: number;
 	/** Custom heading label for the heatmap section. */
 	heatmapLabel: string;
 	/** Whether the activity timeline is visible. */
 	showActivityTimeline: boolean;
+	/** Whether a divider is shown above the activity timeline. */
+	showActivityTimelineDivider: boolean;
 	/** Maximum number of entries in the activity timeline. */
 	activityTimelineCount: number;
 	/** Custom heading label for the activity timeline. */
 	activityTimelineLabel: string;
 	/** Whether the live clock widget is visible. */
 	showClock: boolean;
+	/** Whether a divider is shown above the clock widget. */
+	showClockDivider: boolean;
 	/** IANA timezone identifier for the clock (e.g. "UTC", "Europe/London"). */
 	clockTimezone: string;
 	/** Whether the clock displays the current date. */
@@ -541,12 +648,16 @@ export interface NexusSettings {
 	clockLabel: string;
 	/** Whether the file-type distribution chart is visible. */
 	showFileTypeChart: boolean;
+	/** Whether a divider is shown above the file-type chart. */
+	showFileTypeChartDivider: boolean;
 	/** Maximum number of file types shown in the chart. */
 	fileTypeChartMax: number;
 	/** Custom heading label for the file-type chart. */
 	fileTypeChartLabel: string;
 	/** Whether the task summary widget is visible. */
 	showTaskSummary: boolean;
+	/** Whether a divider is shown above the task summary. */
+	showTaskSummaryDivider: boolean;
 	/** Whether to show the progress bar in the task summary. */
 	taskSummaryShowProgress: boolean;
 	/** Whether to show the unchecked task list in the task summary. */
@@ -561,6 +672,8 @@ export interface NexusSettings {
 	taskSummaryLabel: string;
 	/** Whether the vault-activity section is visible. */
 	showVaultActivity: boolean;
+	/** Whether a divider is shown above the vault-activity section. */
+	showVaultActivityDivider: boolean;
 	/** Maximum number of entries in the vault-activity list. */
 	vaultActivityCount: number;
 	/** Custom heading label for the vault-activity section. */

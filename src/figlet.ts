@@ -69,10 +69,7 @@ function padCharLines(chars: Record<string, FigletChar>): Record<string, FigletC
  * console.log(banner);
  * ```
  */
-export function renderFiglet(
-	text: string,
-	_options?: { font?: FigletFont }
-): string {
+export function renderFiglet(text: string, _options?: { font?: FigletFont }): string {
 	const font = _options?.font ?? DEFAULT_FONT;
 	const paddedChars = padCharLines(font.chars);
 	const lines: string[] = [];

@@ -3,6 +3,7 @@ import {
 	DEFAULT_SETTINGS,
 	DEFAULT_MOCS,
 	DEFAULT_STATS,
+	DEFAULT_NEW_NOTE,
 	DEFAULT_DIVIDER_DESIGN,
 	DIVIDER_PRESETS,
 	DIVIDER_PRESET_NAMES,
@@ -10,7 +11,7 @@ import {
 	deepCloneDefaults,
 	mergeSettings,
 } from "../defaults";
-import type { DividerDesign } from "../types";
+import type { DividerDesign, NexusSettings } from "../types";
 
 describe("DEFAULT_SETTINGS", () => {
 	it("is a valid NexusSettings object", () => {
@@ -22,7 +23,35 @@ describe("DEFAULT_SETTINGS", () => {
 		expect(typeof DEFAULT_SETTINGS.showStats).toBe("boolean");
 		expect(typeof DEFAULT_SETTINGS.showGraph).toBe("boolean");
 		expect(typeof DEFAULT_SETTINGS.mocGridColumns).toBe("number");
-		expect(typeof DEFAULT_SETTINGS.miniGridColumns).toBe("number");
+		expect("miniGridColumns" in DEFAULT_SETTINGS).toBe(false);
+	});
+});
+
+describe("per-component divider flags", () => {
+	it("defaults new labelled components to shown dividers", () => {
+		expect(DEFAULT_SETTINGS.showVaultActivityDivider).toBe(true);
+		expect(DEFAULT_SETTINGS.showHeatmapDivider).toBe(true);
+		expect(DEFAULT_SETTINGS.showActivityTimelineDivider).toBe(true);
+		expect(DEFAULT_SETTINGS.showFileTypeChartDivider).toBe(true);
+		expect(DEFAULT_SETTINGS.showTaskSummaryDivider).toBe(true);
+	});
+
+	it("defaults the legacy MOC divider to hidden", () => {
+		expect(DEFAULT_SETTINGS.showMocDivider).toBe(false);
+	});
+
+	it("removed the obsolete quick-links divider flag", () => {
+		expect("showQuickLinksDivider" in DEFAULT_SETTINGS).toBe(false);
+		expect("quickLinksDividerLabel" in DEFAULT_SETTINGS).toBe(false);
+	});
+
+	it("defaults the clock divider to hidden", () => {
+		expect(DEFAULT_SETTINGS.showClockDivider).toBe(false);
+	});
+
+	it("survives deepCloneDefaults and mergeSettings", () => {
+		expect(deepCloneDefaults().showVaultActivityDivider).toBe(true);
+		expect(mergeSettings(null).showClockDivider).toBe(false);
 	});
 });
 
@@ -54,6 +83,30 @@ describe("DEFAULT_STATS", () => {
 			expect(typeof stat.label).toBe("string");
 			expect(stat.label).toBeTruthy();
 		}
+	});
+});
+
+describe("DEFAULT_NEW_NOTE", () => {
+	it("is disabled by default", () => {
+		expect(DEFAULT_NEW_NOTE.enabled).toBe(false);
+		expect(DEFAULT_NEW_NOTE.label).toBe("+ New Note");
+	});
+});
+
+describe("mergeSettings statsNewNote", () => {
+	it("fills defaults when missing", () => {
+		const result = mergeSettings({});
+		expect(result.statsNewNote).toEqual(DEFAULT_NEW_NOTE);
+	});
+
+	it("merges partial overrides", () => {
+		const result = mergeSettings({
+			statsNewNote: { enabled: true, folder: "Inbox" },
+		} as Partial<NexusSettings>);
+		expect(result.statsNewNote.enabled).toBe(true);
+		expect(result.statsNewNote.folder).toBe("Inbox");
+		expect(result.statsNewNote.label).toBe("+ New Note");
+		expect(result.statsNewNote.template).toBe("");
 	});
 });
 
@@ -91,7 +144,7 @@ describe("detectDividerPreset", () => {
 		expect(detectDividerPreset(DIVIDER_PRESETS.bold)).toBe("bold");
 	});
 
-	it("returns default for unknown design", () => {
+	it("returns custom for unknown design", () => {
 		const custom: DividerDesign = {
 			gradient: "custom",
 			lineWidth: "1px",
@@ -100,7 +153,7 @@ describe("detectDividerPreset", () => {
 			labelColor: "red",
 			labelSpacing: "0",
 		};
-		expect(detectDividerPreset(custom)).toBe("default");
+		expect(detectDividerPreset(custom)).toBe("custom");
 	});
 });
 
@@ -124,52 +177,35 @@ describe("deepCloneDefaults", () => {
 });
 
 describe("mergeSettings", () => {
-	const splitCsv = (val: string) => val.split(",").map((s) => s.trim());
-
 	it("returns deep-cloned defaults when data is null", () => {
-		const result = mergeSettings(null, splitCsv);
+		const result = mergeSettings(null);
 		expect(result.headerText).toBe("NEXUS");
 		expect(result).not.toBe(DEFAULT_SETTINGS);
 		expect(result.mocs).not.toBe(DEFAULT_SETTINGS.mocs);
 	});
 
 	it("returns deep-cloned defaults when data is undefined", () => {
-		const result = mergeSettings(undefined, splitCsv);
+		const result = mergeSettings(undefined);
 		expect(result.headerText).toBe("NEXUS");
 	});
 
 	it("overlays scalar fields from partial data", () => {
-		const result = mergeSettings({ headerText: "CUSTOM", showStats: false }, splitCsv);
+		const result = mergeSettings({ headerText: "CUSTOM", showStats: false });
 		expect(result.headerText).toBe("CUSTOM");
 		expect(result.showStats).toBe(false);
 		expect(result.openOnStartup).toBe(false); // from defaults
 	});
 
 	it("deep-clones array fields from partial data", () => {
-		const result = mergeSettings({ mocs: [{ path: "a", title: "A", desc: "desc", icon: "!" }] }, splitCsv);
+		const result = mergeSettings({ mocs: [{ path: "a", title: "A", desc: "desc", icon: "!" }] });
 		expect(result.mocs).toHaveLength(1);
 		expect(result.mocs[0].path).toBe("a");
 	});
 
 	it("deep-clones dividerDesign", () => {
-		const result = mergeSettings({ dividerDesign: { gradient: "custom" } }, splitCsv);
+		const result = mergeSettings({ dividerDesign: { gradient: "custom" } as DividerDesign });
 		expect(result.dividerDesign.gradient).toBe("custom");
 		expect(result.dividerDesign.lineWidth).toBe(DEFAULT_SETTINGS.dividerDesign.lineWidth);
-	});
-
-	it("handles excludeFolders as array", () => {
-		const result = mergeSettings({ excludeFolders: ["a", "b"] }, splitCsv);
-		expect(result.excludeFolders).toEqual(["a", "b"]);
-	});
-
-	it("handles excludeFolders as CSV string", () => {
-		const result = mergeSettings({ excludeFolders: "a, b, c" }, splitCsv);
-		expect(result.excludeFolders).toEqual(["a", "b", "c"]);
-	});
-
-	it("handles excludeFolders missing", () => {
-		const result = mergeSettings({}, splitCsv);
-		expect(result.excludeFolders).toEqual([]);
 	});
 
 	it("preserves task summary fields", () => {
@@ -177,7 +213,7 @@ describe("mergeSettings", () => {
 			showTaskSummary: false,
 			taskSummaryPath: "Custom/Path",
 			taskSummaryCount: 5,
-		}, splitCsv);
+		});
 		expect(result.showTaskSummary).toBe(false);
 		expect(result.taskSummaryPath).toBe("Custom/Path");
 		expect(result.taskSummaryCount).toBe(5);
@@ -185,7 +221,7 @@ describe("mergeSettings", () => {
 	});
 
 	it("preserves vault activity fields", () => {
-		const result = mergeSettings({ vaultActivityLabel: "CUSTOM LABEL" }, splitCsv);
+		const result = mergeSettings({ vaultActivityLabel: "CUSTOM LABEL" });
 		expect(result.vaultActivityLabel).toBe("CUSTOM LABEL");
 		expect(result.vaultActivityCount).toBe(15);
 		expect(result.vaultActivityShowFade).toBe(true);
@@ -197,7 +233,7 @@ describe("mergeSettings", () => {
 	});
 
 	it("provides activity tracking and timeline defaults", () => {
-		const result = mergeSettings(null, splitCsv);
+		const result = mergeSettings(null);
 		expect(result.activityTrackingEnabled).toBe(true);
 		expect(result.activityTaskTracking).toBe(true);
 		expect(result.activityLogMax).toBe(500);
@@ -212,10 +248,9 @@ describe("mergeSettings", () => {
 	});
 
 	it("clones the activity log when merging", () => {
-		const result = mergeSettings(
-			{ activityLog: [{ time: 1, action: "created", path: "A.md" }] },
-			splitCsv,
-		);
+		const result = mergeSettings({
+			activityLog: [{ time: 1, action: "created", path: "A.md" }],
+		});
 		expect(result.activityLog).toHaveLength(1);
 		expect(result.activityLog[0].path).toBe("A.md");
 		result.activityLog.pop();
@@ -223,7 +258,7 @@ describe("mergeSettings", () => {
 	});
 
 	it("mutating result does not affect defaults", () => {
-		const result = mergeSettings({ headerText: "X" }, splitCsv);
+		const result = mergeSettings({ headerText: "X" });
 		result.headerText = "Y";
 		result.mocs.push({ path: "t", title: "t", desc: "t", icon: "t" });
 		expect(DEFAULT_SETTINGS.headerText).toBe("NEXUS");

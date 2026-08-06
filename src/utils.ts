@@ -38,12 +38,12 @@ export function ensureExtension(path: string): string {
  * ```
  */
 export function safeParseInt(
-	value: string,
+	value: string | number,
 	fallback: number | undefined,
 	min?: number,
 	max?: number,
 ): number | undefined {
-	const n = parseInt(value, 10);
+	const n = parseInt(String(value), 10);
 	if (!Number.isFinite(n)) return fallback;
 	if (min !== undefined && n < min) return fallback;
 	if (max !== undefined && n > max) return fallback;
@@ -95,7 +95,10 @@ export function splitCsv(str: string): string[] {
 export function applyListConfigKV(
 	target: { show: boolean; count?: number; path?: string; tags?: string[] },
 	kv: { key: string; value: string },
-	extraKeys?: Record<string, (val: string, tgt: { show: boolean; count?: number; path?: string; tags?: string[] }) => void>,
+	extraKeys?: Record<
+		string,
+		(val: string, tgt: { show: boolean; count?: number; path?: string; tags?: string[] }) => void
+	>,
 ): void {
 	if (kv.key === "show") target.show = kv.value === "true";
 	if (kv.key === "count") target.count = safeParseInt(kv.value, undefined, 1);
