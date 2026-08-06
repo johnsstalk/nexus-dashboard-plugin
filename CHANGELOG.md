@@ -1,34 +1,8 @@
 # Changelog
 
-## v1.2.2-beta.2
+## v1.3.0-beta.1
 
-### Added
-
-- **Stat metrics & scopes** — each stat counter now supports `metric` (`files`, `notes`, `size`, `tags`), `scope` (`all`, `today`, `week`, `month`, `year`), and `recursive` subfolder traversal, in both settings and `stats:` code blocks
-- **New Note button** — quick-create date-stamped note (`YYYY-MM-DD.md`) from the stats bar with configurable `label`, `folder`, and optional `template` (`new-note`, `new-note-folder`, `new-note-template`, `new-note-label` keys)
-- **`src/stats.ts`** — pure stat computation helpers (`normalizeStatItem`, `computeStatValue`, `windowStart`, `collectFileTags`, `statSummary`, `formatSize`, `dateStamp`) with a dedicated 26-test suite
-- **Timeline rename recovery** — external renames now surface as `renamed`/`moved` instead of a spurious delete:
-  - `pairDeleteCreateEvents` — collapses delete+create pairs within 5s (`TIMELINE_RENAME_PAIR_MS`) into one entry, direction-agnostic
-  - `collectRenameEvents` — startup reconcile converts orphaned deletes into renames by matching mtimes (1000ms tolerance) against a primed `fileMtimes` cache
-  - `ActivityEvent.mtime` — delete events capture the deleted file's mtime so a later create is recognized as a rename
-
-### Changed
-
-- **Stats settings UI** — stat entries rebuilt as a two-row form (label + metric + delete / folder + scope + subfolders), replacing the overflowing one-row layout and the anonymous recursive toggle with a labeled "Incl. subfolders / Direct only" dropdown; live `statSummary()` description; New Note button subgroup
-- **Stats parser keys** — `stats:` blocks accept item entries (`- label` / `- path`) with `metric`, `scope`, `recursive` plus `new-note*` keys
-- **Tabbed settings polish** — tab bar and content layout refinements
-
-### Fixed
-
-- **Live `MODIFIED` events no longer wait for a restart** — the `modify` handler used `isStartupArtifact()` (`min(mtime, ctime)` vs plugin load time), so any file that existed before Obsidian started was treated as a startup indexing artifact and its live edits were silently dropped; `MODIFIED` entries only surfaced after a restart via the startup reconcile backfill. The handler now filters purely on `file.stat.mtime` (skips only mtime before plugin load), so edits — including external ones — appear in the timeline live
-
-### Developer
-
-- `src/obsidian-augment.d.ts` — `App.internalPlugins` module augmentation
-- `primeFileMtimes()` + `reconcileStartupChanges()` — mtime cache and startup reconcile for changes while the plugin was unloaded
-- **Tests: 62 → 125** — new `stats.test.ts` (26), `timeline.test.ts` expanded to 36, `parser.test.ts` 26, `defaults.test.ts` 31, `utils.test.ts` 6
-
-## v1.2.2-beta.1
+> Everything since v1.2.0 shipped here as a single minor. This entry was previously split across the never-released `v1.2.2-beta.1` / `v1.2.2-beta.2` line and renumbered — features under a patch number was a semver mistake.
 
 ### Added
 
@@ -39,6 +13,13 @@
 - **Heatmap block** — `heatmap:` contribution-style activity calendar with `weeks` and `label`
 - **Clock block** — `clock:` live clock widget with `timezone`, `showDate`, `showSeconds`, `format` (12h/24h), and `label`
 - **File-type chart block** — `filetypes:` distribution chart with `max` and `label`
+- **Stat metrics & scopes** — each stat counter now supports `metric` (`files`, `notes`, `size`, `tags`), `scope` (`all`, `today`, `week`, `month`, `year`), and `recursive` subfolder traversal, in both settings and `stats:` code blocks
+- **New Note button** — quick-create date-stamped note (`YYYY-MM-DD.md`) from the stats bar with configurable `label`, `folder`, and optional `template` (`new-note`, `new-note-folder`, `new-note-template`, `new-note-label` keys)
+- **`src/stats.ts`** — pure stat computation helpers (`normalizeStatItem`, `computeStatValue`, `windowStart`, `collectFileTags`, `statSummary`, `formatSize`, `dateStamp`) with a dedicated 26-test suite
+- **Timeline rename recovery** — external renames now surface as `renamed`/`moved` instead of a spurious delete:
+  - `pairDeleteCreateEvents` — collapses delete+create pairs within 5s (`TIMELINE_RENAME_PAIR_MS`) into one entry, direction-agnostic
+  - `collectRenameEvents` — startup reconcile converts orphaned deletes into renames by matching mtimes (1000ms tolerance) against a primed `fileMtimes` cache
+  - `ActivityEvent.mtime` — delete events capture the deleted file's mtime so a later create is recognized as a rename
 - **Collapse all / expand all** buttons in the Components tab with persisted `collapseState` in settings
 - **Quick Links MOC-style editor** — consistent add/edit/reorder UI matching the MOC card editor
 - **Disabled slot feedback** — content-slot dropdown options in the Dashboard tab are greyed out (`.nexus-settings` `select.dropdown option:disabled`) when the corresponding component toggle is off, via `isSlotEnabled()`
@@ -51,6 +32,7 @@
 - **Heatmap grid layout** — swapped day/week loop nesting so cells fill column-by-column instead of row-by-row
 - **Heatmap month labels** — grouped consecutive weeks by month with `grid-column: span` for correct alignment; added gutter spacer column
 - `saveAndRefresh()` in settings (was calling itself recursively)
+- **Live `MODIFIED` events no longer wait for a restart** — the `modify` handler used `isStartupArtifact()` (`min(mtime, ctime)` vs plugin load time), so any file that existed before Obsidian started was treated as a startup indexing artifact and its live edits were silently dropped; `MODIFIED` entries only surfaced after a restart via the startup reconcile backfill. The handler now filters purely on `file.stat.mtime` (skips only mtime before plugin load), so edits — including external ones — appear in the timeline live
 
 ### Changed
 
@@ -58,6 +40,9 @@
 - **Vault Activity** — folder path removed; shows only filename + relative time
 - **Timeline** — tighter line-height/padding, removed min-width constraints
 - **`mergeSettings()`** — centralized settings loader replacing the 170-line manual `loadSettings()` block; every new setting field is handled automatically
+- **Stats settings UI** — stat entries rebuilt as a two-row form (label + metric + delete / folder + scope + subfolders), replacing the overflowing one-row layout and the anonymous recursive toggle with a labeled "Incl. subfolders / Direct only" dropdown; live `statSummary()` description; New Note button subgroup
+- **Stats parser keys** — `stats:` blocks accept item entries (`- label` / `- path`) with `metric`, `scope`, `recursive` plus `new-note*` keys
+- **Tabbed settings polish** — tab bar and content layout refinements
 
 ### Developer
 
@@ -67,8 +52,11 @@
 - `renderDividerPreview()` accepts optional `labelText` parameter
 - Added `.github/workflows/ci.yml` — lint, typecheck, format check, and tests on every push/PR
 - `npm run format:check` restored to green (prettier formatting drift fixed across all 14 source files)
+- `src/obsidian-augment.d.ts` — `App.internalPlugins` module augmentation
+- `primeFileMtimes()` + `reconcileStartupChanges()` — mtime cache and startup reconcile for changes while the plugin was unloaded
+- **Tests: 62 → 125** — new `stats.test.ts` (26), `timeline.test.ts` expanded to 36, `parser.test.ts` 26, `defaults.test.ts` 31, `utils.test.ts` 6
 
-## v1.2.1
+## v1.2.1 (cycle folded into v1.3.0-beta.1, never released)
 
 ### Added
 
