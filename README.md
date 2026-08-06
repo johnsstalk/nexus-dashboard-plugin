@@ -110,12 +110,6 @@ section:
 ```
 ````
 
-![Cards](assets/project.png)
-
-![Code Block](assets/journal_code_block.png)
-
-![Journal](assets/journal.png)
-
 ### Divider
 A horizontal separator between sections.
 
