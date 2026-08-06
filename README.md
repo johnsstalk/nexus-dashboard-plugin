@@ -20,8 +20,6 @@ Create a note with a `nexus-dashboard` code block:
 
 You can configure default settings in **Settings > Community Plugins > Nexus Dashboard**.
 
-![Dashboard](assets/nexus.png)
-
 ## Dashboard Components
 
 ### ASCII header
